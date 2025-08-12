@@ -1,0 +1,84 @@
+{
+  "name": "block-editor",
+  "displayName": "JAI: Block Editor (DSL)",
+  "description": "Bridge between AI code generation and your IDE. Execute AI-suggested changes with simple DSL commands (REPLACE, DELETE, INSERT) across multiple files.",
+  "version": "0.1.0",
+  "publisher": "JeenyJAI",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JeenyJAI/jai-vscode-block-editor"
+  },
+  "bugs": {
+    "url": "https://github.com/JeenyJAI/jai-vscode-block-editor/issues"
+  },
+  "homepage": "https://github.com/JeenyJAI/jai-vscode-block-editor#readme",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Formatters", "Programming Languages"],
+  "keywords": ["replace", "block", "dsl", "refactor", "bulk", "multi-file", "automation", "code-manipulation"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "blockEditorTerminal.showPanel",
+        "title": "JAI: Block Editor (DSL)",
+        "category": ""
+      }
+    ],
+    "configuration": {
+      "title": "Block Editor",
+      "properties": {
+        "blockEditor.validatePaths": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable path validation for security"
+        },
+        "blockEditor.mixedEolPolicy": {
+          "type": "string",
+          "enum": ["ignore", "skip", "warn", "normalize"],
+          "default": "warn",
+          "description": "How to handle mixed line endings"
+        },
+        "blockEditor.enableVerboseLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose logging for debugging"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "npm run clean && npm run esbuild -- --production",
+    "esbuild": "node esbuild.config.js",
+    "clean": "rimraf dist out",
+    "watch": "npm run esbuild -- --watch",
+    "package": "vsce package",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "type-check": "tsc --noEmit",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run",
+    "precommit": "npm run lint && npm run format:check && npm run type-check"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.19.0",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.2.0"
+  }
+}

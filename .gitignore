@@ -1,0 +1,60 @@
+# Compiled output
+dist/
+out/
+*.js
+*.js.map
+*.d.ts
+!esbuild.config.js
+
+# Dependencies
+node_modules/
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+.vscode-test/
+
+# Package files
+*.vsix
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# Build cache
+.eslintcache
+.prettierignore_cache
+tsconfig.tsbuildinfo
+
+# VS Code extension specific
+.vscodeignore
+*.vsix
