@@ -242,16 +242,7 @@ This extension contributes the following settings:
 
 ## Release Notes
 
-### 0.1.0
-
-Initial release with core features:
-- DSL commands for REPLACE, DELETE, INSERT operations
-- Multi-file support with glob patterns
-- Pre-execution analysis
-- Boundary blocks with `---TO---` separator
-- Cross-platform line ending preservation
-- Mixed line endings detection
-- Secure path validation
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Security
 

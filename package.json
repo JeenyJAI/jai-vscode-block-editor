@@ -2,7 +2,7 @@
   "name": "block-editor",
   "displayName": "JAI: Block Editor (DSL)",
   "description": "Bridge between AI code generation and your IDE. Execute AI-suggested changes with simple DSL commands (REPLACE, DELETE, INSERT) across multiple files.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "JeenyJAI",
   "icon": "icon.png",
   "repository": {
@@ -17,8 +17,25 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other", "Formatters", "Programming Languages"],
-  "keywords": ["replace", "block", "dsl", "refactor", "bulk", "multi-file", "automation", "code-manipulation"],
+  "categories": ["Programming Languages", "Snippets", "Machine Learning"],
+"keywords": [
+  "ai",
+  "ai-assistant", 
+  "ai-code",
+  "code-generation",
+  "copilot",
+  "dsl",
+  "block-editor",
+  "block",
+  "edit",
+  "replace",
+  "delete",
+  "insert",
+  "refactor",
+  "bulk-edit",
+  "multi-file",
+  "automation"
+],
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
