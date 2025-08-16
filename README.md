@@ -203,7 +203,7 @@ console.log('DEBUG:
 ---TO---
 ');
 ---END---
-in files ["src/**/*.js", "!node_modules/"]
+in files ["src/**/*.js"]
 ```
 
 ### Add License Headers
@@ -229,16 +229,17 @@ This extension contributes the following settings:
 * `blockEditor.validatePaths`: Enable path validation for security (default: `true`)
 * `blockEditor.mixedEolPolicy`: How to handle mixed line endings (`warn`, `ignore`, `skip`, `normalize`)
 * `blockEditor.enableVerboseLogging`: Enable verbose logging for debugging (default: `false`)
+* `blockEditor.files.respectSearchExclude`: Respect VS Code's exclude settings when resolving files (default: `true`)
+* `blockEditor.files.includeDotfiles`: Control dotfile handling - `inherit`/`always`/`never` (default: `inherit`)
 
 ## Requirements
 
-- VS Code 1.85.0 or higher
+- VS Code 1.87.0 or higher
 
-## Known Issues
+## Behavior Notes
 
-- Binary files are automatically skipped
-- Very large files (>100MB) may cause performance issues
-- Mixed line endings in files will trigger a warning by default
+- Binary files are automatically skipped for safety
+- Mixed line endings in files will trigger a warning (configurable via `blockEditor.mixedEolPolicy`)
 
 ## Release Notes
 

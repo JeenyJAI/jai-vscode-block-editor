@@ -2,7 +2,7 @@
   "name": "block-editor",
   "displayName": "JAI: Block Editor (DSL)",
   "description": "Bridge between AI code generation and your IDE. Execute AI-suggested changes with simple DSL commands (REPLACE, DELETE, INSERT) across multiple files.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "JeenyJAI",
   "icon": "icon.png",
   "repository": {
@@ -15,7 +15,7 @@
   "homepage": "https://github.com/JeenyJAI/jai-vscode-block-editor#readme",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.87.0"
   },
   "categories": ["Programming Languages", "Snippets", "Machine Learning"],
 "keywords": [
@@ -64,6 +64,22 @@
           "type": "boolean",
           "default": false,
           "description": "Enable verbose logging for debugging"
+        },
+        "blockEditor.files.respectSearchExclude": {
+          "type": "boolean",
+          "default": true,
+          "description": "Respect user 'files.exclude' and 'search.exclude' settings when resolving files"
+        },
+        "blockEditor.files.includeDotfiles": {
+          "type": "string",
+          "enum": ["inherit", "always", "never"],
+          "enumDescriptions": [
+            "Follow user's exclude settings for dotfiles",
+            "Include dotfiles unless explicitly excluded by user",
+            "Always exclude dotfiles (add '**/.*' to excludes)"
+          ],
+          "default": "inherit",
+          "description": "How to handle dotfiles (files starting with '.')"
         }
       }
     }
@@ -86,7 +102,7 @@
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.87.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
     "@vscode/vsce": "^2.22.0",
@@ -95,7 +111,7 @@
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.2.0",
     "rimraf": "^5.0.0",
-    "typescript": "^5.3.0",
+    "typescript": "^5.4.0",
     "vitest": "^1.2.0"
   }
 }

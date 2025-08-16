@@ -1,18 +1,20 @@
 // blockEditor.ts - Main BlockEditor engine with EOL preservation and path safety
 
+import * as vscode from 'vscode';
 import { OperationsResult, OperationResult, DSLInstruction, BlockNotFoundError, ParseError } from './types.js';
 import { DSLParser } from './dslParser.js';
 import { DSLProcessor } from './dslProcessor.js';
 import { TextProcessor } from './textProcessor.js';
 import { FileInfo, FileReadResult, normalizeLineEndings, normalizeToEol } from '../utils/fileHelpers.js';
-import { isPathSafe, resolveFilesFromPatterns } from '../utils/pathResolver.js';
+import { FileResolver } from '../utils/fileResolver.js';
 
 export type ExecutionMode = 'apply' | 'preview';
 
 export interface BlockEditorConfig {
   maxLineLength?: number;
-  validatePaths?: boolean; // Enable path validation (default: false for debugging)
+  validatePaths?: boolean; // Enable path validation (default: true)
   mixedEolPolicy?: 'ignore' | 'skip' | 'warn' | 'normalize'; // How to handle mixed line endings (default: 'warn')
+  enableVerboseLogging?: boolean; // Enable verbose console logging (default: false)
 }
 
 export class BlockEditor {
@@ -21,19 +23,29 @@ export class BlockEditor {
   protected processor: DSLProcessor;
   private config: Required<BlockEditorConfig>;
 
+
   constructor(config: BlockEditorConfig = {}) {
     this.parser = new DSLParser();
     this.textProcessor = new TextProcessor();
     this.processor = new DSLProcessor(this.textProcessor);
     this.config = {
       maxLineLength: config.maxLineLength ?? 100000,
-      validatePaths: config.validatePaths ?? true, // Temporarily disabled for debugging
+      validatePaths: config.validatePaths ?? true,
       mixedEolPolicy: config.mixedEolPolicy ?? 'warn',
+      enableVerboseLogging: config.enableVerboseLogging ?? false,
     };
 
     // if (!this.config.validatePaths) {
     //   console.warn('Path validation is DISABLED. Enable it in production!');
     // }
+  }
+
+  /**
+   * Parse a DSL command and return the instruction.
+   * Public method to avoid direct access to private parser.
+   */
+  public parseCommand(command: string): DSLInstruction {
+    return this.parser.parse(command);
   }
 
   /**
@@ -87,14 +99,16 @@ export class BlockEditor {
   }
 
   /**
-   * Apply list of DSL commands to multiple files with EOL preservation and path safety.
+   * Apply list of DSL commands to multiple files using vscode.Uri
+   * This is the preferred method for VSCode extension integration
    */
-  async applyToFiles(
+  async applyToFilesUri(
     commands: string[],
-    filePaths: string[],
-    readFile: (path: string) => Promise<FileReadResult>,
-    writeFile: (path: string, content: string, info: FileInfo) => Promise<void>,
+    fileUris: vscode.Uri[],
+    readFile: (uri: vscode.Uri) => Promise<FileReadResult>,
+    writeFile: (uri: vscode.Uri, content: string, info: FileInfo) => Promise<void>,
     mode: ExecutionMode = 'apply',
+    token?: vscode.CancellationToken,
   ): Promise<OperationsResult> {
     const startTime = Date.now();
 
@@ -110,23 +124,27 @@ export class BlockEditor {
       operations: [],
     };
 
-    if (commands.length === 0 || filePaths.length === 0) {
+    if (commands.length === 0 || fileUris.length === 0) {
       result.duration = Date.now() - startTime;
       return result;
     }
 
-    // Parse all commands and determine their target files
+    // Parse all commands once and determine their target files
     const parsedCommands = await Promise.all(
-      commands.map(async (cmd) => {
+      commands.map(async (cmd, cmdIndex) => {
         const truncated = this.truncateCommand(cmd);
         try {
           const instruction = this.parser.parse(cmd);
           let targetFiles: Set<string> | undefined;
 
-          // If command has scope with files, resolve them
+          // If command has scope with files, resolve them using new FileResolver
           if (instruction.scope?.files?.length) {
-            const resolved = await resolveFilesFromPatterns(instruction.scope.files);
-            targetFiles = new Set(resolved.files.map((u) => u.fsPath.toLowerCase()));
+            const resolved = await FileResolver.resolveTargets(
+              instruction.scope.files, 
+              token ? { token } : undefined
+            );
+            // Store as URI strings to preserve scheme and avoid case issues
+            targetFiles = new Set(resolved.uris.map((u) => u.toString()));
           }
 
           return { 
@@ -134,14 +152,16 @@ export class BlockEditor {
             cmd, 
             instruction, 
             targetFiles, 
-            truncated 
+            truncated,
+            index: cmdIndex 
           };
         } catch (error) {
           return { 
             ok: false as const, 
             cmd, 
             error: error as Error, 
-            truncated 
+            truncated,
+            index: cmdIndex 
           };
         }
       }),
@@ -159,48 +179,60 @@ export class BlockEditor {
     }
 
     // Process each file
-    for (const filePath of filePaths) {
-      // Path safety check
-      if (this.config.validatePaths && !isPathSafe(filePath)) {
-        console.error(`Path validation failed for: ${filePath}`);
+    for (const fileUri of fileUris) {
+      // Check for cancellation
+      if (token?.isCancellationRequested) {
+        break;
+      }
+
+      // Check if URI belongs to workspace using built-in API
+      if (this.config.validatePaths && !vscode.workspace.getWorkspaceFolder(fileUri)) {
+        if (this.config.enableVerboseLogging) {
+          console.error(`URI outside workspace: ${fileUri.toString()}`);
+        }
+        const workspaceFolders = vscode.workspace.workspaceFolders?.map(f => f.uri.toString()).join(', ') || 'none';
         const operation: OperationResult = {
           operationType: 'SECURITY',
           status: mode === 'preview' ? 'WOULD_ERROR' : 'ERROR',
           isPreview: mode === 'preview',
-          filePath,
-          errorMessage: `Path validation failed: ${filePath}`,
+          fileUri,
+          fileUriString: fileUri.toString(),
+          errorMessage: `Path validation failed: ${fileUri.fsPath}`,
           reasonCode: 'OUTSIDE_WORKSPACE',
-          reasonDetails: 'File path may be outside workspace. Check if file exists and is accessible.',
+          reasonDetails: `File is outside workspace. Check if file exists and is accessible.`,
+          meta: {
+            uri: fileUri.toString(),
+            workspaceFolders,
+            details: 'File path may be outside workspace boundaries'
+          }
         };
         result.operations.push(operation);
         result.errors++;
         continue;
       }
 
-      const filePathLower = filePath.toLowerCase();
+      const fileUriString = fileUri.toString();
 
       // Process only commands intended for this file
-      for (let cmdIndex = 0; cmdIndex < parsedCommands.length; cmdIndex++) {
-        const parsed = parsedCommands[cmdIndex];
-        if (!parsed) continue; // Guard against undefined
-        if (!parsed.ok) continue; // Already processed error
+      for (const parsed of parsedCommands) {
+        if (!parsed || !parsed.ok) continue;
 
-        // If command has target files and current file is not in the list - skip
-        if (parsed.targetFiles && !parsed.targetFiles.has(filePathLower)) {
+        // If command has target files and current file is not in the list - skip silently
+        if (parsed.targetFiles && !parsed.targetFiles.has(fileUriString)) {
           continue; // Command not for this file - don't create unnecessary SKIPPED
         }
 
-        const operation = await this.applyToSingleFile(
-          parsed.cmd, 
-          filePath, 
+        const operation = await this.applyToSingleFileUri(
+          parsed.instruction,
+          fileUri, 
           readFile, 
           writeFile, 
-          mode
+          mode,
+          parsed.truncated
         );
 
-        // Add command index for proper identification
-        // @ts-expect-error - adding additional field for debugging
-        (operation as Record<string, unknown>).commandIndex = cmdIndex;
+        // Add metadata for debugging
+        operation.meta = { commandIndex: parsed.index };
         result.operations.push(operation);
 
         // Update counters
@@ -220,34 +252,40 @@ export class BlockEditor {
     return result;
   }
 
-  private async applyToSingleFile(
-    dslCommand: string,
-    filePath: string,
-    readFile: (path: string) => Promise<FileReadResult>,
-    writeFile: (path: string, content: string, info: FileInfo) => Promise<void>,
-    mode: ExecutionMode
-  ): Promise<OperationResult> {
-    const truncatedCommand = this.truncateCommand(dslCommand);
 
-    console.log('Processing command for file:', filePath);
-    console.log('Command preview:', dslCommand.substring(0, 100));
+
+  
+  private async applyToSingleFileUri(
+    instruction: DSLInstruction,
+    fileUri: vscode.Uri,
+    readFile: (uri: vscode.Uri) => Promise<FileReadResult>,
+    writeFile: (uri: vscode.Uri, content: string, info: FileInfo) => Promise<void>,
+    mode: ExecutionMode,
+    truncatedCommand: string
+  ): Promise<OperationResult> {
+    const relativePath = vscode.workspace.asRelativePath(fileUri);
+
+    // Log only if verbose logging is enabled
+    if (this.config.enableVerboseLogging) {
+      console.log('Processing command for file:', relativePath);
+      console.log('Operation:', instruction.operation);
+    }
 
     try {
-      // Parse command
-      const instruction = this.parser.parse(dslCommand);
-
       // Read file with format info
-      const fileData = await readFile(filePath);
+      const fileData = await readFile(fileUri);
 
       // Handle mixed line endings according to policy
       if (fileData.info.isMixed) {
-        const handleResult = await this.handleMixedEol(filePath, fileData.info, mode);
+        const handleResult = await this.handleMixedEolUri(fileUri, fileData.info, mode);
         if (handleResult.skip) {
           return {
             operationType: 'MIXED_EOL',
             status: mode === 'preview' ? 'WOULD_SKIP' : 'SKIPPED',
             isPreview: mode === 'preview',
-            filePath,
+            fileUri,
+            fileUriString: fileUri.toString(),
+            filePath: fileUri.fsPath, // For backward compatibility
             errorMessage: `File has mixed line endings (${fileData.info.mixedEolDetails?.crlfCount} CRLF, ${fileData.info.mixedEolDetails?.lfCount} LF)`,
             sourceCommand: truncatedCommand,
             reasonCode: 'MIXED_EOL',
@@ -256,14 +294,13 @@ export class BlockEditor {
         if (handleResult.normalize && fileData.info.mixedEolDetails) {
           // Normalize content to predominant EOL
           fileData.content = normalizeToEol(fileData.content, fileData.info.mixedEolDetails.predominant);
-          // IMPORTANT: Also update fileInfo to write with predominant EOL, not VSCode's detected one
           fileData.info = {
             ...fileData.info,
             lineEnding: fileData.info.mixedEolDetails.predominant,
-            isMixed: false, // After normalization, it's no longer mixed
+            isMixed: false,
           };
         }
-        // For 'warn' policy: use predominant EOL for writing (without content normalization)
+        // For 'warn' policy: use predominant EOL for writing
         if (
           !handleResult.skip &&
           !handleResult.normalize &&
@@ -282,21 +319,24 @@ export class BlockEditor {
 
       // Execute or preview operation
       if (mode === 'preview') {
-        return this.previewOperation(instruction, normalizedContent, filePath, truncatedCommand);
+        return this.previewOperationUri(instruction, normalizedContent, fileUri, truncatedCommand);
       }
 
-      return await this.executeFileOperation(
+      return await this.executeFileOperationUri(
         instruction,
         normalizedContent,
-        filePath,
+        fileUri,
         fileData.info,
         writeFile,
         truncatedCommand,
       );
     } catch (error) {
-      return this.createErrorResult(error as Error, dslCommand, mode, filePath, truncatedCommand);
+      return this.createErrorResultUri(error as Error, instruction, mode, fileUri, truncatedCommand);
     }
   }
+
+  // Legacy string-based method for backward compatibility
+  // Will be removed in phase C after migration is complete
 
   private processSingleCommand(
     instruction: DSLInstruction,
@@ -347,60 +387,6 @@ export class BlockEditor {
     result.operations.push(operationResult);
     result.successful += blocks.length;
     return modifiedContent;
-  }
-
-  private async executeFileOperation(
-    instruction: DSLInstruction,
-    normalizedContent: string,
-    filePath: string,
-    fileInfo: FileInfo,
-    writeFile: (path: string, content: string, info: FileInfo) => Promise<void>,
-    truncatedCommand: string,
-  ): Promise<OperationResult> {
-    try {
-      const modifiedContent = this.processor.applyInstruction(instruction, normalizedContent);
-
-      // Write file with original format preservation
-      await writeFile(filePath, modifiedContent, fileInfo);
-
-      // Create diff
-      const diff = this.textProcessor.createUnifiedDiff(normalizedContent, modifiedContent, filePath);
-
-      // Find changed lines
-      const { startLine, endLine } = this.findChangedLines(normalizedContent, modifiedContent);
-
-      return {
-        operationType: instruction.operation.toUpperCase(),
-        status: 'SUCCESS',
-        isPreview: false,
-        filePath,
-        lineStart: startLine,
-        lineEnd: endLine,
-        diff,
-        sourceCommand: truncatedCommand,
-      };
-    } catch (error) {
-      if (error instanceof BlockNotFoundError) {
-        return {
-          operationType: instruction.operation.toUpperCase(),
-          status: 'SKIPPED',
-          isPreview: false,
-          filePath,
-          errorMessage: error.message,
-          sourceCommand: truncatedCommand,
-          reasonCode: 'NOT_FOUND',
-        };
-      }
-
-      return {
-        operationType: instruction.operation.toUpperCase(),
-        status: 'ERROR',
-        isPreview: false,
-        filePath,
-        errorMessage: (error as Error).message,
-        sourceCommand: truncatedCommand,
-      };
-    }
   }
 
   private previewOperation(
@@ -479,42 +465,185 @@ export class BlockEditor {
     return command.length > 500 ? command.substring(0, 497) + '...' : command;
   }
 
-  private async handleMixedEol(
-    filePath: string,
+  private async handleMixedEolUri(
+    fileUri: vscode.Uri,
     fileInfo: FileInfo,
     mode: ExecutionMode,
   ): Promise<{ skip: boolean; normalize: boolean }> {
+    const relativePath = vscode.workspace.asRelativePath(fileUri);
+    
     switch (this.config.mixedEolPolicy) {
       case 'ignore':
-        // Silently continue
         return { skip: false, normalize: false };
-
       case 'skip':
-        // Skip file, log to console
-        console.log(`Skipping ${filePath}: mixed line endings detected`);
+        if (this.config.enableVerboseLogging) {
+          console.log(`Skipping ${relativePath}: mixed line endings detected`);
+        }
         return { skip: true, normalize: false };
-
       case 'normalize':
-        // Normalize to predominant EOL
-        console.log(`Normalizing ${filePath} to ${fileInfo.mixedEolDetails?.predominant}`);
+        if (this.config.enableVerboseLogging) {
+          console.log(`Normalizing ${relativePath} to ${fileInfo.mixedEolDetails?.predominant}`);
+        }
         return { skip: false, normalize: true };
-
       case 'warn':
       default:
-        // Show warning in preview mode only
         if (mode === 'preview') {
-          // In preview, we just note it will be processed
           console.warn(
-            `Warning: ${filePath} has mixed line endings ` +
+            `Warning: ${relativePath} has mixed line endings ` +
               `(${fileInfo.mixedEolDetails?.crlfCount} CRLF, ${fileInfo.mixedEolDetails?.lfCount} LF). ` +
               `File will be normalized to ${fileInfo.mixedEolDetails?.predominant} on save.`,
           );
         }
-        // For 'warn', we don't normalize content but still want to write with predominant EOL
-        // This will be handled in applyToSingleFile by updating fileInfo.lineEnding
         return { skip: false, normalize: false };
     }
   }
+
+  private async executeFileOperationUri(
+    instruction: DSLInstruction,
+    normalizedContent: string,
+    fileUri: vscode.Uri,
+    fileInfo: FileInfo,
+    writeFile: (uri: vscode.Uri, content: string, info: FileInfo) => Promise<void>,
+    truncatedCommand: string,
+  ): Promise<OperationResult> {
+    try {
+      const modifiedContent = this.processor.applyInstruction(instruction, normalizedContent);
+      await writeFile(fileUri, modifiedContent, fileInfo);
+
+      const diff = this.textProcessor.createUnifiedDiff(
+        normalizedContent, 
+        modifiedContent, 
+        vscode.workspace.asRelativePath(fileUri)
+      );
+
+      const { startLine, endLine } = this.findChangedLines(normalizedContent, modifiedContent);
+
+      return {
+        operationType: instruction.operation.toUpperCase(),
+        status: 'SUCCESS',
+        isPreview: false,
+        fileUri,
+        fileUriString: fileUri.toString(),
+        lineStart: startLine,
+        lineEnd: endLine,
+        diff,
+        sourceCommand: truncatedCommand,
+      };
+    } catch (error) {
+      if (error instanceof BlockNotFoundError) {
+        return {
+          operationType: instruction.operation.toUpperCase(),
+          status: 'SKIPPED',
+          isPreview: false,
+          fileUri,
+          fileUriString: fileUri.toString(),
+          filePath: fileUri.fsPath,
+          errorMessage: error.message,
+          sourceCommand: truncatedCommand,
+          reasonCode: 'NOT_FOUND',
+        };
+      }
+
+      return {
+        operationType: instruction.operation.toUpperCase(),
+        status: 'ERROR',
+        isPreview: false,
+        fileUri,
+        fileUriString: fileUri.toString(),
+        filePath: fileUri.fsPath,
+        errorMessage: (error as Error).message,
+        sourceCommand: truncatedCommand,
+      };
+    }
+  }
+
+  private previewOperationUri(
+    instruction: DSLInstruction,
+    content: string,
+    fileUri: vscode.Uri,
+    truncatedCommand?: string,
+  ): OperationResult {
+    try {
+      const modifiedContent = this.processor.applyInstruction(instruction, content);
+      const diff = this.textProcessor.createUnifiedDiff(
+        content, 
+        modifiedContent, 
+        vscode.workspace.asRelativePath(fileUri)
+      );
+
+      const { startLine, endLine } = this.findChangedLines(content, modifiedContent);
+
+      return {
+        operationType: instruction.operation.toUpperCase(),
+        status: 'WOULD_SUCCESS',
+        isPreview: true,
+        fileUri,
+        fileUriString: fileUri.toString(),
+        filePath: fileUri.fsPath,
+        lineStart: startLine,
+        lineEnd: endLine,
+        diff,
+        sourceCommand: truncatedCommand,
+      };
+    } catch (error) {
+      if (error instanceof BlockNotFoundError) {
+        return {
+          operationType: instruction.operation.toUpperCase(),
+          status: 'WOULD_SKIP',
+          isPreview: true,
+          fileUri,
+          fileUriString: fileUri.toString(),
+          filePath: fileUri.fsPath,
+          errorMessage: error.message,
+          sourceCommand: truncatedCommand,
+          reasonCode: 'NOT_FOUND',
+        };
+      }
+
+      return {
+        operationType: instruction.operation.toUpperCase(),
+        status: 'WOULD_ERROR',
+        isPreview: true,
+        fileUri,
+        fileUriString: fileUri.toString(),
+        filePath: fileUri.fsPath,
+        errorMessage: (error as Error).message,
+        sourceCommand: truncatedCommand,
+      };
+    }
+  }
+
+  private createErrorResultUri(
+    error: Error,
+    instruction: DSLInstruction,
+    mode: ExecutionMode,
+    fileUri: vscode.Uri,
+    truncatedCommand: string,
+  ): OperationResult {
+    let status: OperationResult['status'];
+    let reasonCode: OperationResult['reasonCode'];
+
+    if (error instanceof BlockNotFoundError) {
+      status = mode === 'preview' ? 'WOULD_SKIP' : 'SKIPPED';
+      reasonCode = 'NOT_FOUND';
+    } else {
+      status = mode === 'preview' ? 'WOULD_ERROR' : 'ERROR';
+    }
+
+    return {
+      operationType: instruction.operation.toUpperCase(),
+      status,
+      isPreview: mode === 'preview',
+      fileUri,
+      fileUriString: fileUri.toString(),
+      filePath: fileUri.fsPath,
+      errorMessage: error.message,
+      sourceCommand: truncatedCommand,
+      reasonCode,
+    };
+  }
+
+
 
   private handleParseError(
     error: ParseError,
@@ -572,41 +701,7 @@ export class BlockEditor {
     result.errors++;
   }
 
-  private createErrorResult(
-    error: Error,
-    dslCommand: string,
-    mode: ExecutionMode,
-    filePath: string,
-    truncatedCommand: string,
-  ): OperationResult {
-    let opType = 'UNKNOWN';
-    try {
-      const parsed = this.parser.parse(dslCommand);
-      opType = parsed.operation.toUpperCase();
-    } catch {
-      // Ignore parse errors
-    }
 
-    let status: OperationResult['status'];
-    let reasonCode: OperationResult['reasonCode'];
-
-    if (error instanceof BlockNotFoundError) {
-      status = mode === 'preview' ? 'WOULD_SKIP' : 'SKIPPED';
-      reasonCode = 'NOT_FOUND';
-    } else {
-      status = mode === 'preview' ? 'WOULD_ERROR' : 'ERROR';
-    }
-
-    return {
-      operationType: opType,
-      status,
-      isPreview: mode === 'preview',
-      filePath,
-      errorMessage: error.message,
-      sourceCommand: truncatedCommand,
-      reasonCode,
-    };
-  }
 
   private guessOperationType(command: string): string {
     const commandLower = command.toLowerCase();

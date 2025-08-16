@@ -1,5 +1,8 @@
 // types.ts - Core types and models for BlockEditor
 
+// Type-only import for vscode.Uri to avoid runtime dependency
+export type VscodeUri = import('vscode').Uri;
+
 // Enums
 export enum BlockType {
   EXACT = 'exact',
@@ -48,11 +51,31 @@ export interface BlockSearchResult {
   matchedContent?: string;
 }
 
+// Typed reason codes for operation failures
+export type ReasonCode = 
+  | 'BINARY'
+  | 'ENCODING_GARBLED'
+  | 'CONTROL_CHARS'
+  | 'LINE_TOO_LONG'
+  | 'OUTSIDE_WORKSPACE'
+  | 'SYMLINK_OUTSIDE'
+  | 'EXCLUDED'
+  | 'TOO_MANY_FILES'
+  | 'TOO_LARGE'
+  | 'NOT_FOUND'
+  | 'MIXED_EOL'
+  | 'UNKNOWN';
+
 export interface OperationResult {
   operationType: string;
   status: 'SUCCESS' | 'SKIPPED' | 'ERROR' | 'WOULD_SUCCESS' | 'WOULD_SKIP' | 'WOULD_ERROR';
   isPreview: boolean;
   blockId?: string | undefined;
+  /** The file URI (for internal use) */
+  fileUri?: VscodeUri | undefined;
+  /** Serializable URI string for UI/logging */
+  fileUriString?: string | undefined;
+  /** @deprecated Use fileUriString for display. This field is kept for backward compatibility */
   filePath?: string | undefined;
   lineStart?: number | undefined;
   lineEnd?: number | undefined;
@@ -60,23 +83,13 @@ export interface OperationResult {
   modifiedBlock?: string | undefined;
   diff?: string | undefined;
   errorMessage?: string | undefined;
-  reasonCode?:
-    | 'BINARY'
-    | 'ENCODING_GARBLED'
-    | 'CONTROL_CHARS'
-    | 'LINE_TOO_LONG'
-    | 'OUTSIDE_WORKSPACE'
-    | 'SYMLINK_OUTSIDE'
-    | 'EXCLUDED'
-    | 'TOO_MANY_FILES'
-    | 'TOO_LARGE'
-    | 'NOT_FOUND'
-    | 'MIXED_EOL'
-    | undefined;
+  reasonCode?: ReasonCode | undefined;
   reasonDetails?: string | undefined;
   sourceCommand?: string | undefined;
   blocksFound?: number | undefined;
   blocksProcessed?: number | undefined;
+  /** Metadata for debugging and tracking */
+  meta?: Record<string, unknown> | undefined;
 }
 
 export interface OperationsResult {

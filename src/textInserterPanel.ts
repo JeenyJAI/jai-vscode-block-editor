@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
+import { FileResolver } from './utils/fileResolver.js';
 import { BlockEditor, ExecutionMode } from './blockEditor/index.js';
-import { resolveFilesFromPatterns } from './utils/pathResolver.js';
 import { readFileWithInfo, writeFilePreservingFormat, FileReadResult, FileInfo } from './utils/fileHelpers.js';
 import type { OperationsResult, OperationResult } from './blockEditor/types.js';
 
@@ -36,9 +36,14 @@ export class TextInserterPanel {
 
   private constructor(panel: vscode.WebviewPanel, _extensionUri: vscode.Uri) {
     this._panel = panel;
+    
+    // Read configuration from VS Code settings
+    const config = vscode.workspace.getConfiguration('blockEditor');
+    
     this.replacer = new BlockEditor({
-      validatePaths: true, // Temporarily disabled for debugging
-      mixedEolPolicy: 'warn', // Warn about mixed line endings
+      validatePaths: config.get<boolean>('validatePaths', true),
+      mixedEolPolicy: config.get<'ignore' | 'skip' | 'warn' | 'normalize'>('mixedEolPolicy', 'warn'),
+      enableVerboseLogging: config.get<boolean>('enableVerboseLogging', false),
     });
 
     // console.log('TextInserterPanel constructor called');
@@ -103,36 +108,34 @@ export class TextInserterPanel {
       }
 
       // Extract all files from commands using parser
-      const allFiles = await this._extractFilesFromCommands(commands);
+      const fileUris = await this._extractFilesFromCommands(commands);
 
-      if (allFiles.length === 0) {
+      // Fallback to active document if no files specified
+      if (fileUris.length === 0) {
         const activeEditor = vscode.window.activeTextEditor;
         if (!activeEditor) {
           vscode.window.showErrorMessage('No active file and no files specified in commands');
           return;
         }
-        allFiles.push(activeEditor.document.uri.fsPath);
+        fileUris.push(activeEditor.document.uri);
       }
 
-      // File reader with EOL preservation
-      const readFileWithFormat = async (filePath: string): Promise<FileReadResult> => {
-        const uri = vscode.Uri.file(filePath);
+      // File reader/writer working with Uri
+      const readFile = async (uri: vscode.Uri): Promise<FileReadResult> => {
         return await readFileWithInfo(uri);
       };
 
-      // File writer with EOL preservation
-      const writeFileWithFormat = async (filePath: string, content: string, info: FileInfo): Promise<void> => {
-        const uri = vscode.Uri.file(filePath);
+      const writeFile = async (uri: vscode.Uri, content: string, info: FileInfo): Promise<void> => {
         await writeFilePreservingFormat(uri, content, info);
       };
 
       // First do preview
-      const previewResult = await this.replacer.applyToFiles(
+      const previewResult = await this.replacer.applyToFilesUri(
         commands,
-        allFiles,
-        readFileWithFormat,
+        fileUris,
+        readFile,
         async () => {}, // Don't write in preview
-        'preview',
+        'preview'
       );
 
       // Show statistics and ask for confirmation
@@ -147,12 +150,12 @@ export class TextInserterPanel {
 
       if (answer?.title === 'Apply') {
         // Apply changes
-        const result = await this.replacer.applyToFiles(
+        const result = await this.replacer.applyToFilesUri(
           commands,
-          allFiles,
-          readFileWithFormat,
-          writeFileWithFormat,
-          'apply',
+          fileUris,
+          readFile,
+          writeFile,
+          'apply'
         );
 
         // Show results
@@ -251,22 +254,21 @@ export class TextInserterPanel {
     return commands.map((cmd) => cmd.trim()).filter((cmd) => cmd.length > 0);
   }
 
-  private async _extractFilesFromCommands(commands: string[]): Promise<string[]> {
-    const fileSet = new Set<string>();
+  private async _extractFilesFromCommands(commands: string[]): Promise<vscode.Uri[]> {
+    const byUri = new Map<string, vscode.Uri>();
 
     for (const command of commands) {
       try {
         // Parse command to get file patterns
-        const parser = this.replacer['parser']; // Access parser from replacer
-        const instruction = parser.parse(command);
+        const instruction = this.replacer.parseCommand(command);
 
         if (instruction.scope?.files && instruction.scope.files.length > 0) {
-          // Use secure path resolver
-          const resolveResult = await resolveFilesFromPatterns(instruction.scope.files);
+          // Use new unified file resolver
+          const resolveResult = await FileResolver.resolveTargets(instruction.scope.files);
 
-          // Add resolved files
-          for (const uri of resolveResult.files) {
-            fileSet.add(uri.fsPath);
+          // Collect unique URIs
+          for (const uri of resolveResult.uris) {
+            byUri.set(uri.toString(), uri);
           }
 
           // Show warnings for skipped patterns
@@ -278,6 +280,12 @@ export class TextInserterPanel {
           for (const errorItem of resolveResult.errors) {
             vscode.window.showErrorMessage(`Error with pattern "${errorItem.pattern}": ${errorItem.error}`);
           }
+
+          // Log resolution report in verbose mode
+          const config = vscode.workspace.getConfiguration('blockEditor');
+          if (config.get<boolean>('enableVerboseLogging', false)) {
+            console.log('File resolution report:', resolveResult.report);
+          }
         }
       } catch (error) {
         // If parsing fails, continue with next command
@@ -285,7 +293,7 @@ export class TextInserterPanel {
       }
     }
 
-    return Array.from(fileSet);
+    return Array.from(byUri.values());
   }
 
   private _showResults(result: OperationsResult, mode: ExecutionMode): void {
@@ -303,19 +311,31 @@ export class TextInserterPanel {
     // Group operations by file
     const operationsByFile = new Map<string, OperationResult[]>();
     for (const op of result.operations) {
-      const file = op.filePath || 'In-memory content';
-      if (!operationsByFile.has(file)) {
-        operationsByFile.set(file, []);
+      // Use fileUriString for grouping, fallback to filePath for backward compatibility
+      const key = op.fileUriString ?? op.filePath ?? 'In-memory content';
+      if (!operationsByFile.has(key)) {
+        operationsByFile.set(key, []);
       }
-      const fileOps = operationsByFile.get(file);
+      const fileOps = operationsByFile.get(key);
       if (fileOps) {
         fileOps.push(op);
       }
     }
 
     // Show operations by file
-    for (const [file, ops] of operationsByFile) {
-      outputChannel.appendLine(`File: ${file}`);
+    for (const [key, ops] of operationsByFile) {
+      // Try to display as relative path
+      let displayPath = key;
+      try {
+        if (key.includes('://')) {
+          const uri = vscode.Uri.parse(key);
+          displayPath = vscode.workspace.asRelativePath(uri);
+        }
+      } catch {
+        // Keep as-is if parsing fails
+      }
+      
+      outputChannel.appendLine(`File: ${displayPath}`);
       outputChannel.appendLine('='.repeat(60));
       
       // Count successful operations for file
@@ -547,7 +567,7 @@ export class TextInserterPanel {
         <body>
             <div class="container">
                 <div class="header">
-                    <h2>Block Editor - DSL Commands</h2>
+                    <h2>Block Editor - DSL Commands (0.2.0)</h2>
                     <details class="hint-container">
                         <summary class="hint-toggle">📖 Show/Hide Instructions & Examples</summary>
                         <div class="hint">
