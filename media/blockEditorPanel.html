@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- CSP Policy: Modify this line when adding new external resource types -->
+    <meta http-equiv="Content-Security-Policy" 
+          content="default-src 'none'; 
+                   img-src ${cspSource} https: data:;
+                   font-src ${cspSource};
+                   style-src ${cspSource} 'unsafe-inline'; 
+                   script-src 'nonce-${nonce}';
+                   connect-src ${cspSource};
+                   worker-src 'none';
+                   media-src 'none';
+                   manifest-src 'none';
+                   object-src 'none';
+                   base-uri 'none';
+                   form-action 'none';
+                   frame-ancestors 'none';">
+    <title>Block Editor</title>
+    <link href="${cssUri}" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>JAI: Block Editor - DSL Commands ${version}</h2>
+            <details class="hint-container">
+                <summary class="hint-toggle">📖 Show/Hide Instructions & Examples</summary>
+                <div class="hint">
+                    <h3>Supported Operations</h3>
+                    <ul class="hint-list">
+                        <li><code>replace block</code> - replace all occurrences of a block</li>
+                        <li><code>delete block</code> - delete all occurrences of a block</li>
+                        <li><code>insert before</code> - insert before each occurrence</li>
+                        <li><code>insert after</code> - insert after each occurrence</li>
+                        <li><code>insert at start</code> - insert at the beginning of file</li>
+                        <li><code>insert at end</code> - insert at the end of file</li>
+                    </ul>
+
+                    <h3>Example Commands</h3>
+                    
+                    <h4>1. REPLACE - Simple replacement</h4>
+                    <div class="example">replace block
+---BEGIN---
+DEBUG = True
+---END---
+with
+---BEGIN---
+DEBUG = False
+---END---
+in files ["config.py", "settings.py"]</div>
+
+                    <h4>2. REPLACE with boundaries (using ---TO---)</h4>
+                    <div class="example">replace block
+---BEGIN---
+def process_data(data):
+    # Start of function
+---TO---
+    return result
+    # End of function
+---END---
+with
+---BEGIN---
+def process_data(data):
+    # Optimized version
+    if not data:
+        return None
+    result = optimize(data)
+    log_performance(result)
+    return result
+    # End of function
+---END---
+in files ["processor.py"]</div>
+
+                    <h4>3. DELETE - Remove code blocks</h4>
+                    <div class="example">delete block
+---BEGIN---
+# TODO: Remove after migration
+def legacy_function():
+    pass
+---END---
+in files ["*.py"]</div>
+
+                    <h4>4. INSERT - Add code at specific positions</h4>
+                    <div class="example">insert after
+---BEGIN---
+class User:
+---END---
+with
+---BEGIN---
+    def __init__(self, name, email):
+        self.name = name
+        self.email = email
+---END---
+in files ["models.py"]</div>
+
+                    <h3>File Patterns</h3>
+                    <div class="example">in files ["config.py"]                        # single file
+in files ["config.py", "settings.py"]        # multiple files
+in files ["src/"]                             # all files in directory (recursive)
+in files ["*.py"]                             # pattern in current directory
+in files ["src/*.py"]                         # pattern in specific directory
+in files ["**/test_*.py"]                     # recursive pattern
+in files ["config.py", "src/", "tests/*.py"]  # combination</div>
+
+                    <h4>Pattern Rules:</h4>
+                    <ul class="hint-list">
+                        <li>Paths ending with <code>/</code> - directories (recursive search)</li>
+                        <li><code>*</code> - any characters within single level</li>
+                        <li><code>**</code> - recursive search in all subdirectories</li>
+                        <li>All patterns are processed as glob patterns</li>
+                        <li>If no files specified - uses current active file</li>
+                    </ul>
+
+                    <h3>Multiple Commands</h3>
+                    <p>Use <code>---NEXT_BLOCK---</code> to execute multiple operations at once:</p>
+                    <div class="example">replace block
+---BEGIN---
+VERSION = "1.0.0"
+---END---
+with
+---BEGIN---
+VERSION = "2.0.0"
+---END---
+in files ["version.py"]
+
+---NEXT_BLOCK---
+
+insert after
+---BEGIN---
+VERSION = "2.0.0"
+---END---
+with
+---BEGIN---
+RELEASE_DATE = "2024-01-01"
+---END---
+in files ["version.py"]</div>
+
+                    <h3>Tips</h3>
+                    <ul class="hint-list">
+                        <li>Commands are case-sensitive</li>
+                        <li>Whitespace and indentation matter</li>
+                        <li>Use <kbd>Ctrl</kbd>+<kbd>Enter</kbd> (<kbd>Cmd</kbd>+<kbd>Enter</kbd> on Mac) for quick apply</li>
+                        <li>⚠️ Preview analyzes each command independently. Actual results may differ as commands are applied sequentially and can affect subsequent operations.</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+        <textarea 
+            id="commandsInput"
+            aria-label="DSL Commands Input. Use Ctrl+Enter or Cmd+Enter to apply changes"
+            placeholder="Enter your DSL commands here...
+
+Example commands:
+- replace block
+- delete block
+- insert before/after/at start/at end
+
+Use 'in files [...]' to specify target files
+Use 'in class' or 'in method' for scope"
+            spellcheck="false"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+        ></textarea>
+        <div class="button-container">
+            <button id="applyButton" type="button">
+                Apply Changes
+            </button>
+        </div>
+        <div class="shortcuts">
+            Tip: Press Ctrl+Enter (Cmd+Enter on Mac) to apply changes
+        </div>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+    </div>
+
+    <!-- Script in the end of body -->
+    <script nonce="${nonce}" src="${jsUri}"></script>
+</body>
+</html>

@@ -15,6 +15,47 @@ All notable changes to the **JAI Block Editor** extension are documented in this
 
 ---
 
+## [0.3.0] - 2025-08-17
+**Highlights:** New secure webview architecture, improved accessibility, live debug mode.
+
+### Added
+- Webview architecture with separate HTML/CSS/JS (maintainability)
+- Dynamic version in header (from `package.json`)
+- Debug mode toggled via `blockEditor.debug`, live switching without reload
+- Native VS Code dialog for input clearing
+- Auto-disabling Apply button when input is empty
+- ARIA attributes (`aria-label`, `aria-busy`, `role="status"`) and `:focus-visible`
+- `prefers-reduced-motion` support
+- Details/summary expansion state persistence
+- Input validation for incoming webview messages
+- Command category **JAI** in Command Palette
+
+### Changed
+- Migrated from inline to modular webview (HTML/CSS/JS)
+- Stronger CSP with cryptographically secure nonce
+- Idempotent DOM-ready initialization
+- Replaced browser `confirm()` with native VS Code dialogs
+- State management uses fresh snapshots to prevent races
+- Status handling via `classList` (no `className` overwrite)
+- Textarea hardened with `autocomplete="off"`, `autocapitalize="off"`, `autocorrect="off"`
+- Restricted resource loading with `localResourceRoots`
+
+### Fixed
+- Logger capturing stale debug state
+- Button state not updating after programmatic changes
+- Potential state overwrites under concurrency
+- Missing `type="button"` on Apply button
+- Incomplete CSP directives in fallback HTML
+- Input focus after initialization
+
+### Security
+- Strict CSP with protective directives
+- Escaped error messages in fallback HTML
+- `enableCommandUris: false`
+- Allowed message types validated
+
+---
+
 ## [0.2.1] - 2025-08-17
 
 ### Added
