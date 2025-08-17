@@ -567,7 +567,7 @@ export class TextInserterPanel {
         <body>
             <div class="container">
                 <div class="header">
-                    <h2>Block Editor - DSL Commands (0.2.0)</h2>
+                    <h2>Block Editor - DSL Commands (0.2.1)</h2>
                     <details class="hint-container">
                         <summary class="hint-toggle">📖 Show/Hide Instructions & Examples</summary>
                         <div class="hint">
