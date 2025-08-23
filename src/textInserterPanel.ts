@@ -30,7 +30,7 @@ export class TextInserterPanel {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        enableCommandUris: false,       // Explicitly disable command URIs for security
+        enableCommandUris: false, // Security: disable command URIs
         localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')]
       },
     );
@@ -52,7 +52,7 @@ export class TextInserterPanel {
     });
 
     // Set HTML content
-    void this._update(); // void for explicit Promise ignoring
+    void this._update(); // Fire-and-forget: intentionally ignore promise
 
     // Handle messages from webview
     this._panel.webview.onDidReceiveMessage(
@@ -69,7 +69,7 @@ export class TextInserterPanel {
             vscode.window.showInformationMessage(message.value);
             break;
           case 'requestClearConfirmation':
-            // Better than browser confirm - native VS Code dialog
+            // Use native VS Code dialog (not browser confirm)
             const answer = await vscode.window.showInformationMessage(
               'Commands applied successfully. Clear the input?',
               'Clear',
@@ -80,7 +80,7 @@ export class TextInserterPanel {
             }
             break;
           case 'webviewReady':
-            // Send debug mode setting when webview is ready
+            // Set debug mode on webview ready
             const config = vscode.workspace.getConfiguration('blockEditor');
             const debugMode = config.get<boolean>('debug', false);
             this._panel.webview.postMessage({ 
@@ -99,7 +99,7 @@ export class TextInserterPanel {
     // Handle panel disposal
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
-    // Subscribe to configuration changes for live debug mode updates
+    // Watch configuration changes to update debug mode
     this._disposables.push(
       vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('blockEditor.debug')) {
@@ -119,6 +119,8 @@ export class TextInserterPanel {
     console.log('=== _previewAndApply called ===');
     console.log('Commands:', commandsText);
 
+    // Set busy state without changing button label
+
     try {
       // Add IDs to blocks
       const { commandsWithIds, idMap } = this._addIdsToCommands(commandsText);
@@ -134,14 +136,14 @@ export class TextInserterPanel {
 
       if (commands.length === 0) {
         vscode.window.showWarningMessage('No DSL commands found');
-        return;
+        return; // Finally block handles busy state cleanup
       }
 
       // Get workspace folder
       const workspaceFolders = vscode.workspace.workspaceFolders;
       if (!workspaceFolders) {
         vscode.window.showErrorMessage('No workspace folder open');
-        return;
+        return; // Finally block handles busy state cleanup
       }
 
       // Extract all files from commands using parser
@@ -152,12 +154,12 @@ export class TextInserterPanel {
         const activeEditor = vscode.window.activeTextEditor;
         if (!activeEditor) {
           vscode.window.showErrorMessage('No active file and no files specified in commands');
-          return;
+          return; // Finally block handles busy state cleanup
         }
         fileUris.push(activeEditor.document.uri);
       }
 
-      // File reader/writer working with Uri
+      // File I/O using URIs
       const readFile = async (uri: vscode.Uri): Promise<FileReadResult> => {
         return await readFileWithInfo(uri);
       };
@@ -171,12 +173,15 @@ export class TextInserterPanel {
         commands,
         fileUris,
         readFile,
-        async () => {}, // Don't write in preview
+        async () => {}, // No-op writer in preview mode
         'preview'
       );
 
-      // Show statistics and ask for confirmation
+      // Show analysis summary and request confirmation
       const confirmMessage = this._createConfirmMessage(previewResult, idMap);
+      
+      // Signal analysis dialog display
+      this._panel.webview.postMessage({ type: 'showing:analysis' });
 
       const answer = await vscode.window.showInformationMessage(
         confirmMessage,
@@ -185,8 +190,12 @@ export class TextInserterPanel {
         { title: 'Cancel', isCloseAffordance: true }
       );
 
+      // Handle all dialog outcomes
       if (answer?.title === 'Apply') {
-        // Apply changes
+        // Signal start of Apply Changes operation
+        this._panel.webview.postMessage({ type: 'applying:changes' });
+        
+        // Apply changes to target files
         const result = await this.replacer.applyToFilesUri(
           commands,
           fileUris,
@@ -195,17 +204,31 @@ export class TextInserterPanel {
           'apply'
         );
 
-        // Show results
+        // Show operation results to user
         this._showResults(result, 'apply');
 
-        // If successfully applied changes, offer to clear field
+        // Offer to clear input on success
         if (result.successful > 0) {
           this._panel.webview.postMessage({ type: 'commandsApplied' });
+        } else {
+          // Clear busy state regardless of operation outcome
+          this._panel.webview.postMessage({ type: 'processing:complete' });
         }
+      } else {
+        // User cancelled via Cancel button or dialog close
+        console.log('User cancelled the operation');
+        this._panel.webview.postMessage({ type: 'processing:cancelled' });
       }
+      
     } catch (error) {
+      // Handle error and clear busy state
       vscode.window.showErrorMessage(`BlockEditor error: ${error}`);
       console.error('BlockEditor error:', error);
+      this._panel.webview.postMessage({ type: 'processing:error', error: String(error) });
+      
+    } finally {
+      // Failsafe: clear busy state in all scenarios
+      this._panel.webview.postMessage({ type: 'processing:end' });
     }
   }
 
@@ -221,7 +244,7 @@ export class TextInserterPanel {
       return `---NEXT_BLOCK:${id}---`;
     });
 
-    // Add ID 0000 for first block
+    // Set ID 0000 for initial block
     idMap.set('0000', 0);
 
     return { commandsWithIds, idMap };
@@ -238,7 +261,7 @@ export class TextInserterPanel {
     if (result.skipped > 0 || result.errors > 0) {
       message += '\nDetails:\n';
       
-      // Collect IDs of skipped and error operations
+      // Group operations by status for report details
       const skippedIds: string[] = [];
       const errorIds: string[] = [];
       const reasons = new Map<string, string[]>();
@@ -277,8 +300,7 @@ export class TextInserterPanel {
   }
 
   private _getIdForOperationIndex(index: number, _idMap: Map<string, number>): string {
-    // Use operation index directly for ID generation
-    // since operations go sequentially by commands
+    // Map operation index to ID (sequential)
     const id = index.toString().padStart(4, '0');
     return id;
   }
@@ -287,7 +309,7 @@ export class TextInserterPanel {
     // Split by ---NEXT_BLOCK--- with ID support
     const commands = content.split(/---NEXT_BLOCK(?::\w+)?---/);
 
-    // Clean empty commands and trim spaces
+    // Filter empty blocks and trim whitespace
     return commands.map((cmd) => cmd.trim()).filter((cmd) => cmd.length > 0);
   }
 
@@ -296,36 +318,36 @@ export class TextInserterPanel {
 
     for (const command of commands) {
       try {
-        // Parse command to get file patterns
+        // Parse file patterns from DSL command
         const instruction = this.replacer.parseCommand(command);
 
         if (instruction.scope?.files && instruction.scope.files.length > 0) {
-          // Use new unified file resolver
+          // Resolve patterns to file URIs
           const resolveResult = await FileResolver.resolveTargets(instruction.scope.files);
 
-          // Collect unique URIs
+          // Deduplicate URIs
           for (const uri of resolveResult.uris) {
             byUri.set(uri.toString(), uri);
           }
 
-          // Show warnings for skipped patterns
+          // Show warnings for unresolved patterns
           for (const skipped of resolveResult.skipped) {
             vscode.window.showWarningMessage(`Skipped pattern "${skipped.pattern}": ${skipped.reason}`);
           }
 
-          // Show errors
+          // Show pattern resolution errors
           for (const errorItem of resolveResult.errors) {
             vscode.window.showErrorMessage(`Error with pattern "${errorItem.pattern}": ${errorItem.error}`);
           }
 
-          // Log resolution report in verbose mode
+          // Log detailed resolution report (verbose mode)
           const config = vscode.workspace.getConfiguration('blockEditor');
           if (config.get<boolean>('enableVerboseLogging', false)) {
             console.log('File resolution report:', resolveResult.report);
           }
         }
       } catch (error) {
-        // If parsing fails, continue with next command
+        // Skip to next command on parse failure
         console.error('Failed to parse command for files:', error);
       }
     }
@@ -345,10 +367,10 @@ export class TextInserterPanel {
     outputChannel.appendLine(`Duration: ${result.duration}ms`);
     outputChannel.appendLine('');
 
-    // Group operations by file
+    // Group operations by file for structured output
     const operationsByFile = new Map<string, OperationResult[]>();
     for (const op of result.operations) {
-      // Use fileUriString for grouping, fallback to filePath for backward compatibility
+      // Group by URI string (fallback to file path)
       const key = op.fileUriString ?? op.filePath ?? 'In-memory content';
       if (!operationsByFile.has(key)) {
         operationsByFile.set(key, []);
@@ -359,9 +381,9 @@ export class TextInserterPanel {
       }
     }
 
-    // Show operations by file
+    // Output results grouped by file
     for (const [key, ops] of operationsByFile) {
-      // Try to display as relative path
+      // Convert to workspace-relative path for readability
       let displayPath = key;
       try {
         if (key.includes('://')) {
@@ -369,20 +391,20 @@ export class TextInserterPanel {
           displayPath = vscode.workspace.asRelativePath(uri);
         }
       } catch {
-        // Keep as-is if parsing fails
+        // Fall back to original path on parse error
       }
       
       outputChannel.appendLine(`File: ${displayPath}`);
       outputChannel.appendLine('='.repeat(60));
       
-      // Count successful operations for file
+      // Count successful operations per file
       const successCount = ops.filter(op => op.status === 'SUCCESS').length;
       if (successCount > 0) {
         outputChannel.appendLine(`  REPLACE: SUCCESS (${successCount} replacement${successCount !== 1 ? 's' : ''})`);
         outputChannel.appendLine('');
       }
       
-      // Show only SKIPPED and ERROR operations with details
+      // Show details for failed operations only
       for (const op of ops) {
         if (op.status === 'SKIPPED' || op.status === 'ERROR') {
           outputChannel.appendLine(`  ${op.operationType}: ${op.status}`);
@@ -405,7 +427,7 @@ export class TextInserterPanel {
 
     outputChannel.show();
 
-    // Show message to user
+    // Show user feedback based on results
     const message = `Applied ${result.successful} operations, skipped ${result.skipped}, failed ${result.errors}`;
 
     if (result.errors > 0) {
@@ -421,7 +443,7 @@ export class TextInserterPanel {
     try {
       this._panel.webview.html = await this._getHtmlForWebview();
     } catch (error) {
-      // Panel might be disposed, log but don't throw
+      // Handle disposed panel gracefully
       console.error('Failed to update webview:', error);
     }
   }

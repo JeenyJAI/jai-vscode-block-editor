@@ -15,6 +15,22 @@ All notable changes to the **JAI Block Editor** extension are documented in this
 
 ---
 
+## [0.3.1] - 2025-08-23
+
+### Fixed
+- UI lock after cancelling Pre-execution Analysis dialog ([#3](https://github.com/JeenyJAI/jai-vscode-block-editor/issues/3))
+- Button label not restoring to "Apply Changes" after user cancellation
+- Missing UI state handling for all dialog outcomes (Cancel/Esc/dialog close)
+- Busy state not cleared on early returns (no commands, no workspace, no files)
+
+### Changed
+- Centralised busy state management with unified `setBusy()` function
+- Added `processing:cancelled` and `processing:end` message handlers for robust state control
+- Enhanced visual feedback with spinner animation during operation processing
+- Added 30s timeout failsafe against UI freezing
+
+---
+
 ## [0.3.0] - 2025-08-17
 **Highlights:** New secure webview architecture, improved accessibility, live debug mode.
 

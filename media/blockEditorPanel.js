@@ -1,7 +1,6 @@
 // Wrapper to guarantee execution after DOM loading
 (function() {
     function init() {
-        // All existing code from <script> block
         const vscode = acquireVsCodeApi();
         const commandsInput = document.getElementById('commandsInput');
         const applyButton = document.getElementById('applyButton');
@@ -14,14 +13,12 @@
         // Debug logger that respects the debug flag
         const debug = {
             log: (...args) => {
-                // Read current state each time to avoid closure issue
                 const currentState = vscode.getState() || {};
                 if (currentState.debugMode) {
                     console.log('[BlockEditor]', ...args);
                 }
             },
             error: (...args) => {
-                // Always log errors
                 console.error('[BlockEditor]', ...args);
             }
         };
@@ -29,22 +26,65 @@
         // Flag to prevent double execution
         let isProcessing = false;
         
+        // Centralized busy state management
+        // Store original button text once at initialization
+        const ORIGINAL_BUTTON_TEXT = applyButton ? applyButton.textContent : 'Apply Changes';
+        
+        function setBusy(isBusy, statusMessage = '') {
+            isProcessing = isBusy;
+            
+            // Button state management
+            if (applyButton) {
+                applyButton.disabled = isBusy;
+                applyButton.classList.toggle('is-processing', isBusy);
+                
+                // Update button text during processing or restore original
+                if (isBusy && statusMessage) {
+                    applyButton.textContent = statusMessage;
+                } else if (!isBusy) {
+                    // Always restore original text when unlocking
+                    applyButton.textContent = ORIGINAL_BUTTON_TEXT;
+                }
+            }
+            
+            // ARIA attributes for accessibility
+            document.body.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+            
+            // Input field management
+            if (commandsInput) {
+                commandsInput.readOnly = isBusy;
+                commandsInput.classList.toggle('is-processing', isBusy);
+            }
+            
+            // Show status if message provided
+            if (statusMessage) {
+                showStatus(statusMessage, 'info');
+            }
+            
+            debug.log(`UI busy state: ${isBusy}`, statusMessage);
+        }
+        
         function showStatus(message, type = 'info') {
             if (!statusDiv) return;
             statusDiv.textContent = message;
-            // Use classList for better class management
-            statusDiv.classList.remove('show', 'error', 'warning', 'info');
+            statusDiv.classList.remove('show', 'error', 'warning', 'info', 'success');
             statusDiv.classList.add('status', 'show', type);
-            setTimeout(() => {
+            
+            // Auto-hide after 5 seconds
+            clearTimeout(statusDiv._hideTimeout);
+            statusDiv._hideTimeout = setTimeout(() => {
                 statusDiv.classList.remove('show');
             }, 5000);
         }
         
-        // Apply button handler
+        // Apply button handler with double-click protection
         if (applyButton) {
-            applyButton.addEventListener('click', () => {
+            applyButton.addEventListener('click', (e) => {
+                // Double-click protection
                 if (isProcessing) {
                     debug.log('Already processing, ignoring click');
+                    e.preventDefault();
+                    e.stopPropagation();
                     return;
                 }
                 
@@ -53,10 +93,8 @@
                 
                 if (commands) {
                     debug.log('Sending message with mode: preview-and-apply');
-                    isProcessing = true;
-                    applyButton.disabled = true;
-                    document.body.setAttribute('aria-busy', 'true'); // Set ARIA busy
-                    showStatus('Processing commands...', 'info');
+                    setBusy(true, 'Analyzing...');
+                    
                     vscode.postMessage({
                         type: 'executeCommands',
                         value: commands,
@@ -78,7 +116,7 @@
             commandsInput.addEventListener('keydown', (e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                     debug.log('Keyboard shortcut triggered');
-                    if (applyButton && !applyButton.disabled) {
+                    if (applyButton && !applyButton.disabled && !isProcessing) {
                         applyButton.click();
                     }
                     e.preventDefault();
@@ -86,32 +124,80 @@
             });
         }
 
-        // Handle messages from extension
+        // Enhanced message handler
         window.addEventListener('message', event => {
             const message = event.data;
             
-            // Validate message type
-            const allowedTypes = ['updateCommands', 'setDebugMode', 'commandsApplied', 'clearInput', 'error'];
-            if (!message || typeof message.type !== 'string' || !allowedTypes.includes(message.type)) {
-                debug.error('Invalid message type:', message?.type);
+            // Extended list of allowed message types
+            const allowedTypes = [
+                'updateCommands', 'setDebugMode', 'commandsApplied', 'clearInput', 'error',
+                // New state management message types
+                'processing:start', 'processing:end', 'processing:cancelled',
+                'processing:error', 'processing:complete', 'applying:changes',
+                'showing:analysis'
+            ];
+            
+            if (!message || typeof message.type !== 'string') {
+                debug.error('Invalid message:', message);
+                return;
+            }
+            
+            // Process only known types, ignore others
+            if (!allowedTypes.includes(message.type)) {
+                debug.log('Unknown message type (ignoring):', message.type);
                 return;
             }
             
             debug.log('Received message:', message.type);
             
             switch (message.type) {
+                // State management handlers
+                case 'processing:start':
+                    setBusy(true, 'Processing...');
+                    break;
+                
+                case 'showing:analysis':
+                    // During analysis dialog, only block UI without changing text
+                    setBusy(true);
+                    break;
+                    
+                case 'applying:changes':
+                    setBusy(true, 'Applying changes...');
+                    break;
+                    
+                case 'processing:cancelled':
+                    setBusy(false);
+                    showStatus('Operation cancelled', 'warning');
+                    debug.log('Operation cancelled by user');
+                    break;
+                    
+                case 'processing:error':
+                    setBusy(false);
+                    showStatus(message.error || 'An error occurred', 'error');
+                    debug.error('Processing error:', message.error);
+                    break;
+                    
+                case 'processing:complete':
+                    setBusy(false);
+                    showStatus('Operation completed', 'success');
+                    break;
+                    
+                case 'processing:end':
+                    // Final unlock guarantee
+                    setBusy(false);
+                    break;
+                    
+                // Existing handlers (updated)
                 case 'updateCommands':
                     if (commandsInput) {
                         commandsInput.value = message.value;
                     }
-                    // Use fresh state snapshot to avoid overwriting
                     const freshState1 = vscode.getState() || {};
                     vscode.setState({ ...freshState1, commands: message.value });
-                    updateButtonState(); // Update button after programmatic change
+                    updateButtonState();
                     break;
                     
                 case 'setDebugMode':
-                    // Use fresh state snapshot
                     const freshState3 = vscode.getState() || {};
                     freshState3.debugMode = message.value;
                     vscode.setState(freshState3);
@@ -119,13 +205,8 @@
                     break;
                     
                 case 'commandsApplied':
-                    isProcessing = false;
-                    document.body.removeAttribute('aria-busy'); // Clear ARIA busy
-                    if (applyButton) {
-                        applyButton.disabled = false;
-                    }
-                    updateButtonState(); // Sync button state after re-enabling
-                    showStatus('Commands applied successfully!', 'info');
+                    setBusy(false);
+                    showStatus('Commands applied successfully!', 'success');
                     
                     // Use VS Code message instead of browser confirm
                     vscode.postMessage({
@@ -137,20 +218,14 @@
                     if (commandsInput) {
                         commandsInput.value = '';
                     }
-                    // Use fresh state snapshot to avoid overwriting
                     const freshState2 = vscode.getState() || {};
                     vscode.setState({ ...freshState2, commands: '' });
-                    updateButtonState(); // Update button after clearing
+                    updateButtonState();
                     debug.log('Input cleared');
                     break;
                     
                 case 'error':
-                    isProcessing = false;
-                    document.body.removeAttribute('aria-busy'); // Clear ARIA busy
-                    if (applyButton) {
-                        applyButton.disabled = false;
-                    }
-                    updateButtonState(); // Sync button state after error
+                    setBusy(false);
                     showStatus(message.value || 'An error occurred', 'error');
                     debug.error('Error received:', message.value);
                     break;
@@ -163,7 +238,6 @@
             commandsInput.addEventListener('input', (e) => {
                 clearTimeout(saveTimeout);
                 saveTimeout = setTimeout(() => {
-                    // Always use fresh state to avoid overwriting
                     const freshState = vscode.getState() || {};
                     freshState.commands = e.target.value;
                     vscode.setState(freshState);
@@ -195,9 +269,13 @@
             });
         }
 
-        // Function to update button state - reusable across handlers
+        // Function to update button state
         function updateButtonState() {
             if (!commandsInput || !applyButton) return;
+            
+            // Don't change state if processing is active
+            if (isProcessing) return;
+            
             const hasContent = commandsInput.value.trim().length > 0;
             applyButton.disabled = !hasContent;
             applyButton.classList.toggle('disabled', !hasContent);
@@ -205,21 +283,38 @@
 
         // Dynamic button state based on input
         if (commandsInput && applyButton) {
-            // Update on input change
             commandsInput.addEventListener('input', updateButtonState);
-            
-            // Set initial state
             updateButtonState();
         }
 
         // Safe focus on input field
         if (commandsInput && typeof commandsInput.focus === 'function') {
-            // Small delay to ensure proper focus
             setTimeout(() => {
-                commandsInput.focus();
-                debug.log('Input field focused');
+                // Don't focus if processing is active
+                if (!isProcessing) {
+                    commandsInput.focus();
+                    debug.log('Input field focused');
+                }
             }, 100);
         }
+        
+        // Timeout protection against UI freezing
+        // Automatic unlock after 30 seconds
+        let processingTimeout;
+        const originalSetBusy = setBusy;
+        setBusy = function(isBusy, statusMessage) {
+            clearTimeout(processingTimeout);
+            
+            if (isBusy) {
+                processingTimeout = setTimeout(() => {
+                    debug.error('Processing timeout - auto unlocking UI');
+                    originalSetBusy(false);
+                    showStatus('Operation timed out', 'warning');
+                }, 30000); // 30 seconds timeout
+            }
+            
+            originalSetBusy(isBusy, statusMessage);
+        };
         
         // Send ready message to extension
         vscode.postMessage({ type: 'webviewReady' });
@@ -228,10 +323,8 @@
     
     // Check DOM readiness before initialization
     if (document.readyState === 'loading') {
-        // Use once: true for idempotency
         document.addEventListener('DOMContentLoaded', init, { once: true });
     } else {
-        // DOM already loaded, run immediately
         init();
     }
 })();
