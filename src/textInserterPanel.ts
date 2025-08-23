@@ -57,10 +57,8 @@ export class TextInserterPanel {
     // Handle messages from webview
     this._panel.webview.onDidReceiveMessage(
       async (message) => {
-        console.log('Received message:', message);
         switch (message.type) {
           case 'executeCommands':
-            console.log('Execute commands with mode:', message.mode);
             if (message.mode === 'preview-and-apply') {
               await this._previewAndApply(message.value);
             }
@@ -94,8 +92,6 @@ export class TextInserterPanel {
       this._disposables,
     );
 
-    console.log('Message handler registered');
-
     // Handle panel disposal
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
@@ -115,15 +111,62 @@ export class TextInserterPanel {
     );
   }
 
+  /**
+   * Parse DSL commands and extract block IDs
+   * Returns array of command blocks with their associated IDs
+   */
+  private _parseCommandBlocks(content: string): Array<{ id: string; content: string }> {
+    const blocks: Array<{ id: string; content: string }> = [];
+    
+    // Split by lines to ensure separators are on their own line
+    const lines = content.split('\n');
+    
+    let currentId = '0000';
+    let currentContent: string[] = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line === undefined) {
+        continue;
+      }
+      
+      const trimmedLine = line.trim();
+      
+      // Check if this line is a separator (must be alone on the line)
+      if (trimmedLine.startsWith('---NEXT_BLOCK') && trimmedLine.endsWith('---')) {
+        // Save previous block if it has content
+        if (currentContent.length > 0) {
+          const blockContent = currentContent.join('\n').trim();
+          if (blockContent) {
+            blocks.push({ id: currentId, content: blockContent });
+          }
+        }
+        
+        // Extract ID from separator or generate sequential ID
+        const idMatch = trimmedLine.match(/---NEXT_BLOCK:(\w+)---/);
+        currentId = idMatch?.[1] ?? blocks.length.toString().padStart(4, '0');
+        currentContent = [];
+      } else {
+        // This is content, add to current block
+        currentContent.push(line);
+      }
+    }
+    
+    // Add last block if exists
+    if (currentContent.length > 0) {
+      const blockContent = currentContent.join('\n').trim();
+      if (blockContent) {
+        blocks.push({ id: currentId, content: blockContent });
+      }
+    }
+    
+    return blocks;
+  }
+
   private async _previewAndApply(commandsText: string): Promise<void> {
-    console.log('=== _previewAndApply called ===');
-    console.log('Commands:', commandsText);
-
-    // Set busy state without changing button label
-
     try {
-      // Add IDs to blocks
-      const { commandsWithIds, idMap } = this._addIdsToCommands(commandsText);
+      // Add IDs to blocks without explicit IDs
+      const { commandsWithIds } = this._addIdsToCommands(commandsText);
 
       // Update text in WebView
       this._panel.webview.postMessage({
@@ -131,8 +174,10 @@ export class TextInserterPanel {
         value: commandsWithIds,
       });
 
-      // Split commands
-      const commands = this._splitDSLCommands(commandsWithIds);
+      // Parse commands and extract their IDs
+      const commandBlocks = this._parseCommandBlocks(commandsWithIds);
+      const commands = commandBlocks.map(block => block.content);
+      const blockIds = commandBlocks.map(block => block.id);
 
       if (commands.length === 0) {
         vscode.window.showWarningMessage('No DSL commands found');
@@ -178,7 +223,7 @@ export class TextInserterPanel {
       );
 
       // Show analysis summary and request confirmation
-      const confirmMessage = this._createConfirmMessage(previewResult, idMap);
+      const confirmMessage = this._createConfirmMessage(previewResult, blockIds);
       
       // Signal analysis dialog display
       this._panel.webview.postMessage({ type: 'showing:analysis' });
@@ -216,14 +261,12 @@ export class TextInserterPanel {
         }
       } else {
         // User cancelled via Cancel button or dialog close
-        console.log('User cancelled the operation');
         this._panel.webview.postMessage({ type: 'processing:cancelled' });
       }
       
     } catch (error) {
       // Handle error and clear busy state
       vscode.window.showErrorMessage(`BlockEditor error: ${error}`);
-      console.error('BlockEditor error:', error);
       this._panel.webview.postMessage({ type: 'processing:error', error: String(error) });
       
     } finally {
@@ -232,25 +275,19 @@ export class TextInserterPanel {
     }
   }
 
-  private _addIdsToCommands(commandsText: string): { commandsWithIds: string; idMap: Map<string, number> } {
-    const idMap = new Map<string, number>();
-    let blockIndex = 0;
-
+  private _addIdsToCommands(commandsText: string): { commandsWithIds: string } {
     // Replace ---NEXT_BLOCK--- with ---NEXT_BLOCK:ID---
+    let blockIndex = 0;
     const commandsWithIds = commandsText.replace(/---NEXT_BLOCK---/g, () => {
       blockIndex++;
       const id = blockIndex.toString().padStart(4, '0');
-      idMap.set(id, blockIndex);
       return `---NEXT_BLOCK:${id}---`;
     });
 
-    // Set ID 0000 for initial block
-    idMap.set('0000', 0);
-
-    return { commandsWithIds, idMap };
+    return { commandsWithIds };
   }
 
-  private _createConfirmMessage(result: OperationsResult, _idMap: Map<string, number>): string {
+  private _createConfirmMessage(result: OperationsResult, blockIds: string[]): string {
     let message = `PRE-EXECUTION ANALYSIS\n`;
     message += `${'─'.repeat(30)}\n`;
     message += `Total commands: ${result.totalCommands}\n`;
@@ -267,7 +304,8 @@ export class TextInserterPanel {
       const reasons = new Map<string, string[]>();
       
       result.operations.forEach((op: OperationResult, index: number) => {
-        const id = this._getIdForOperationIndex(index, _idMap);
+        // Use real block ID from parsed blocks instead of sequential index
+        const id = blockIds[index] ?? index.toString().padStart(4, '0');
         
         if (op.status === 'WOULD_SKIP') {
           skippedIds.push(id);
@@ -297,20 +335,6 @@ export class TextInserterPanel {
 
     message += '\nContinue with applying changes?';
     return message;
-  }
-
-  private _getIdForOperationIndex(index: number, _idMap: Map<string, number>): string {
-    // Map operation index to ID (sequential)
-    const id = index.toString().padStart(4, '0');
-    return id;
-  }
-
-  private _splitDSLCommands(content: string): string[] {
-    // Split by ---NEXT_BLOCK--- with ID support
-    const commands = content.split(/---NEXT_BLOCK(?::\w+)?---/);
-
-    // Filter empty blocks and trim whitespace
-    return commands.map((cmd) => cmd.trim()).filter((cmd) => cmd.length > 0);
   }
 
   private async _extractFilesFromCommands(commands: string[]): Promise<vscode.Uri[]> {
@@ -343,12 +367,13 @@ export class TextInserterPanel {
           // Log detailed resolution report (verbose mode)
           const config = vscode.workspace.getConfiguration('blockEditor');
           if (config.get<boolean>('enableVerboseLogging', false)) {
-            console.log('File resolution report:', resolveResult.report);
+            const outputChannel = vscode.window.createOutputChannel('JAI Block Editor');
+            outputChannel.appendLine('[FILES] File resolution report:');
+            outputChannel.appendLine(JSON.stringify(resolveResult.report, null, 2));
           }
         }
       } catch (error) {
-        // Skip to next command on parse failure
-        console.error('Failed to parse command for files:', error);
+        // Skip to next command on parse failure - expected for some DSL variations
       }
     }
 
@@ -356,10 +381,10 @@ export class TextInserterPanel {
   }
 
   private _showResults(result: OperationsResult, mode: ExecutionMode): void {
-    const outputChannel = vscode.window.createOutputChannel('BlockEditor Results');
+    const outputChannel = vscode.window.createOutputChannel('JAI Block Editor');
     
     outputChannel.clear();
-    outputChannel.appendLine(`=== ${mode.toUpperCase()} MODE ===`);
+    outputChannel.appendLine(`[APPLY] === ${mode.toUpperCase()} MODE ===`);
     outputChannel.appendLine(`Total commands: ${result.totalCommands}`);
     outputChannel.appendLine(`Successful: ${result.successful}`);
     outputChannel.appendLine(`Skipped: ${result.skipped}`);
@@ -442,9 +467,8 @@ export class TextInserterPanel {
   private async _update(): Promise<void> {
     try {
       this._panel.webview.html = await this._getHtmlForWebview();
-    } catch (error) {
-      // Handle disposed panel gracefully
-      console.error('Failed to update webview:', error);
+    } catch {
+      // Panel might be disposed - expected during shutdown
     }
   }
 

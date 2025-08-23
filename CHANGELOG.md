@@ -15,10 +15,24 @@ All notable changes to the **JAI Block Editor** extension are documented in this
 
 ---
 
+## [0.3.2] - 2025-08-23
+
+### Fixed
+- "PRE-EXECUTION ANALYSIS" misreported block IDs when numbering had gaps ([#4](https://github.com/JeenyJAI/jai-vscode-block-editor/issues/4))
+- DSL markers inside comments were parsed as separators (phantom blocks/IDs)
+- Valid command blocks were incorrectly marked as errors in analysis
+
+### Changed
+- Switched to line-by-line parsing; separators recognised only on their own line (replacing regex-based split)
+- Mapped operations to explicit DSL IDs instead of sequential indices
+- Improved robustness when marker-like text appears within code/comments
+
+---
+
 ## [0.3.1] - 2025-08-23
 
 ### Fixed
-- UI lock after cancelling Pre-execution Analysis dialog ([#3](https://github.com/JeenyJAI/jai-vscode-block-editor/issues/3))
+- UI lock after cancelling "PRE-EXECUTION ANALYSIS" ([#3](https://github.com/JeenyJAI/jai-vscode-block-editor/issues/3))
 - Button label not restoring to "Apply Changes" after user cancellation
 - Missing UI state handling for all dialog outcomes (Cancel/Esc/dialog close)
 - Busy state not cleared on early returns (no commands, no workspace, no files)
