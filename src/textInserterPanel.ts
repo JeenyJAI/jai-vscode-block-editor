@@ -12,6 +12,97 @@ export class TextInserterPanel {
   private _disposables: vscode.Disposable[] = [];
   private replacer: BlockEditor;
 
+  /**
+   * Split DSL text into blocks with pre-assigned IDs
+   * IDs are assigned BEFORE parsing to ensure correct error attribution
+   */
+  private _splitIntoBlocksWithIds(source: string): Array<{ id: string; content: string }> {
+    // Normalize line endings
+    const text = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = text.split('\n');
+
+    const NEXT_RE = /^\s*---NEXT_BLOCK(?::\s*([0-9]{1,10}))?---\s*$/;
+    const BEGIN_RE = /^\s*---BEGIN(?::[\w.-]+)?---\s*$/;  // Support BEGIN:ID with dots
+    const END_RE = /^\s*---END(?::[\w.-]+)?---\s*$/;      // Support END:ID with dots
+
+    const used = new Set<string>();
+    const blocks: Array<{ id: string; content: string }> = [];
+    
+    let depth = 0;                // Track BEGIN/END nesting depth
+    let seq = 0;                  // Base for implicit IDs
+    let pendingId = String(seq++).padStart(4, '0');
+    let pendingWasImplicit = true;  // Track if current ID is implicit
+    used.add(pendingId);
+    
+    let buf: string[] = [];
+
+    const push = (): void => {
+      const content = buf.join('\n').replace(/^\n+/, '').trimEnd();
+      if (content.trim().length > 0) {
+        blocks.push({ id: pendingId, content });
+      } else {
+        // Empty block - rollback ID reservation
+        if (pendingWasImplicit) {
+          // Rollback implicit ID to avoid gaps
+          used.delete(pendingId);
+          seq = Math.max(0, seq - 1);
+        }
+        // Keep explicit IDs in 'used' to avoid duplicates
+      }
+      buf = [];
+    };
+
+    for (const line of lines) {
+      if (BEGIN_RE.test(line)) { 
+        depth++; 
+        buf.push(line); 
+        continue; 
+      }
+      
+      if (END_RE.test(line)) { 
+        depth = Math.max(0, depth - 1); 
+        buf.push(line); 
+        continue; 
+      }
+
+      // Process NEXT_BLOCK separator only outside of BEGIN/END blocks
+      if (depth === 0) {
+        const m = line.match(NEXT_RE);
+        if (m) {
+          // Flush previous block
+          push();
+
+          if (m[1]) {
+            // Explicit ID provided
+            const explicitNum = parseInt(m[1], 10);
+            pendingId = String(explicitNum).padStart(4, '0');
+            pendingWasImplicit = false;
+            used.add(pendingId);
+            seq = Math.max(seq, explicitNum + 1);
+          } else {
+            // Generate next available implicit ID
+            let candidate = String(seq).padStart(4, '0');
+            while (used.has(candidate)) {
+              seq++;
+              candidate = String(seq).padStart(4, '0');
+            }
+            pendingId = candidate;
+            pendingWasImplicit = true;
+            used.add(pendingId);
+            seq++;
+          }
+          continue; // Don't include separator in content
+        }
+      }
+
+      buf.push(line);
+    }
+
+    // Flush the last block
+    push();
+    return blocks;
+  }
+
   public static createOrShow(extensionUri: vscode.Uri): void {
     // If panel already exists, show it
     if (TextInserterPanel.currentPanel) {
@@ -105,81 +196,12 @@ export class TextInserterPanel {
             type: 'setDebugMode',
             value: debugMode
           });
-          // Debug mode configuration updated
+          // Configuration updated successfully
         }
       })
     );
   }
 
-  /**
-   * Parse DSL commands and extract block IDs
-   * Returns array of command blocks with their associated IDs
-   */
-  private _parseCommandBlocks(content: string): Array<{ id: string; content: string }> {
-    const blocks: Array<{ id: string; content: string }> = [];
-    
-    // Remove BOM and split by any line ending
-    const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/);
-    
-    // Use same regex pattern as parser for consistency
-    // IMPORTANT: Must match DSLParser.BEGIN_RE exactly
-    const BEGIN_RE = /^---BEGIN(:[\w-]+)?---$/;  // Capturing group for ID
-    
-    let currentId = '0000';
-    let currentContent: string[] = [];
-    let insideBlock = false;
-    let currentEndMarker: string | null = null;
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i] ?? '';
-      const trimmedLine = line.trim();
-      
-      if (!insideBlock) {
-        // Check for block start and compute exact END marker
-        const beginMatch = BEGIN_RE.exec(trimmedLine);
-        if (beginMatch) {
-          insideBlock = true;
-          // Construct exact END marker from captured ID
-          currentEndMarker = `---END${beginMatch[1] ?? ''}---`;
-          currentContent.push(line);
-          continue;
-        }
-        
-        // Check for separator (only outside blocks)
-        if (trimmedLine.startsWith('---NEXT_BLOCK') && trimmedLine.endsWith('---')) {
-          // Save previous block if it has content
-          const blockContent = currentContent.join('\n').trim();
-          if (blockContent) {
-            blocks.push({ id: currentId, content: blockContent });
-          }
-          
-          // Extract ID from separator or generate sequential ID
-          const idMatch = trimmedLine.match(/---NEXT_BLOCK:(\w+)---/);
-          currentId = idMatch?.[1] ?? blocks.length.toString().padStart(4, '0');
-          currentContent = [];
-          continue;
-        }
-        
-        currentContent.push(line);
-      } else {
-        // Inside block: only exit on exact END marker match
-        if (trimmedLine === currentEndMarker) {
-          insideBlock = false;
-          currentEndMarker = null;
-        }
-        // Keep everything inside blocks (including pseudo NEXT_BLOCK markers)
-        currentContent.push(line);
-      }
-    }
-    
-    // CRITICAL: Flush the last block (if no trailing ---NEXT_BLOCK:0001---)
-    const tailContent = currentContent.join('\n').trim();
-    if (tailContent) {
-      blocks.push({ id: currentId, content: tailContent });
-    }
-    
-    return blocks;
-  }
 
   private async _previewAndApply(commandsText: string): Promise<void> {
     try {
@@ -192,10 +214,10 @@ export class TextInserterPanel {
         value: commandsWithIds,
       });
 
-      // Parse commands and extract their IDs
-      const commandBlocks = this._parseCommandBlocks(commandsWithIds);
-      const commands = commandBlocks.map(block => block.content);
-      const blockIds = commandBlocks.map(block => block.id);
+      // Split into blocks with pre-assigned IDs (before parsing)
+      const blocks = this._splitIntoBlocksWithIds(commandsWithIds);
+      const commands = blocks.map(block => block.content);
+      const blockIds = blocks.map(block => block.id);
 
       if (commands.length === 0) {
         vscode.window.showWarningMessage('No DSL commands found');
@@ -237,11 +259,13 @@ export class TextInserterPanel {
         fileUris,
         readFile,
         async () => {}, // No-op writer in preview mode
-        'preview'
+        'preview',
+        undefined, // token
+        blockIds  // Pass block IDs for correct error attribution
       );
 
       // Show analysis summary and request confirmation
-      const confirmMessage = this._createConfirmMessage(previewResult, blockIds);
+      const confirmMessage = this._createConfirmMessage(previewResult);
       
       // Signal analysis dialog display
       this._panel.webview.postMessage({ type: 'showing:analysis' });
@@ -264,7 +288,9 @@ export class TextInserterPanel {
           fileUris,
           readFile,
           writeFile,
-          'apply'
+          'apply',
+          undefined, // token
+          blockIds  // Pass block IDs for correct error attribution
         );
 
         // Show operation results to user
@@ -305,7 +331,7 @@ export class TextInserterPanel {
     return { commandsWithIds };
   }
 
-  private _createConfirmMessage(result: OperationsResult, blockIds: string[]): string {
+  private _createConfirmMessage(result: OperationsResult): string {
     let message = `PRE-EXECUTION ANALYSIS\n`;
     message += `${'─'.repeat(30)}\n`;
     message += `Total commands: ${result.totalCommands}\n`;
@@ -321,9 +347,9 @@ export class TextInserterPanel {
       const errorIds: string[] = [];
       const reasons = new Map<string, string[]>();
       
-      result.operations.forEach((op: OperationResult, index: number) => {
-        // Use real block ID from parsed blocks instead of sequential index
-        const id = blockIds[index] ?? index.toString().padStart(4, '0');
+      result.operations.forEach((op: OperationResult) => {
+        // Use blockId directly from operation
+        const id = op.blockId ?? '0000';
         
         if (op.status === 'WOULD_SKIP') {
           skippedIds.push(id);
@@ -391,7 +417,7 @@ export class TextInserterPanel {
           }
         }
       } catch (error) {
-        // Skip to next command on parse failure - expected for some DSL variations
+        // Skip to next command on parse failure
       }
     }
 
@@ -486,7 +512,7 @@ export class TextInserterPanel {
     try {
       this._panel.webview.html = await this._getHtmlForWebview();
     } catch {
-      // Panel might be disposed - expected during shutdown
+      // Handle disposed panel gracefully
     }
   }
 

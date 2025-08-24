@@ -51,7 +51,7 @@ export interface BlockSearchResult {
   matchedContent?: string;
 }
 
-// Typed reason codes for operation failures
+// Standardised reason codes for operation failures
 export type ReasonCode = 
   | 'BINARY'
   | 'ENCODING_GARBLED'
@@ -70,7 +70,7 @@ export interface OperationResult {
   operationType: string;
   status: 'SUCCESS' | 'SKIPPED' | 'ERROR' | 'WOULD_SUCCESS' | 'WOULD_SKIP' | 'WOULD_ERROR';
   isPreview: boolean;
-  blockId?: string | undefined;
+  blockId?: string | undefined;  // Command block ID (0000, 0001, etc.)
   /** The file URI (for internal use) */
   fileUri?: VscodeUri | undefined;
   /** Serializable URI string for UI/logging */

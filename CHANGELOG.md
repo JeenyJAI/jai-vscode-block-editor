@@ -15,6 +15,28 @@ All notable changes to the **JAI Block Editor** extension are documented in this
 
 ---
 
+## [0.4.1] - 2025-08-25
+
+### Added
+- Added `blockId` field to `OperationResult` for per-command error attribution
+
+### Changed
+- ⚠️ Breaking: `applyToFilesUri` now requires `blockIds` parameter for error attribution
+  Migration: Split commands with `_splitIntoBlocksWithIds()` and pass resulting `blockIds` array to `applyToFilesUri`
+- Improved block splitting logic to handle complex edge cases:
+  - `---NEXT_BLOCK---` markers inside `---BEGIN---/---END---` blocks are properly ignored
+  - Support for `---BEGIN:ID---/---END:ID---` markers with dots in IDs
+  - Explicit block IDs (e.g., `---NEXT_BLOCK:1111---`) properly update the sequence counter
+
+### Fixed
+- Incorrect block ID attribution in "PRE-EXECUTION ANALYSIS" for parse errors ([#5](https://github.com/JeenyJAI/jai-vscode-block-editor/issues/5))
+  - Parse errors now show correct block ID (e.g., "Commands 0002 have errors" instead of "Commands 0000")
+  - Block IDs are now assigned before parsing, ensuring accurate error reporting
+- Handling of non-sequential explicit block IDs (e.g., `---NEXT_BLOCK:1111---`)
+- Empty blocks no longer create gaps in the ID numbering sequence
+
+---
+
 ## [0.4.0] - 2025-08-24
 
 ### Added

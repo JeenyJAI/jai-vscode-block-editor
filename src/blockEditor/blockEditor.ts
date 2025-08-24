@@ -35,9 +35,7 @@ export class BlockEditor {
       enableVerboseLogging: config.enableVerboseLogging ?? false,
     };
 
-    // if (!this.config.validatePaths) {
-    //   console.warn('Path validation is DISABLED. Enable it in production!');
-    // }
+
   }
 
   /**
@@ -75,19 +73,23 @@ export class BlockEditor {
     // Normalize content for processing
     let currentContent = normalizeLineEndings(content);
 
-    for (const command of commands) {
+    for (let i = 0; i < commands.length; i++) {
+      const command = commands[i];
+      if (!command) continue; // Skip undefined commands
+      
       const truncatedCommand = this.truncateCommand(command);
+      const blockId = '0000';  // Default for legacy apply method without blockIds
 
       try {
         const instruction = this.parser.parse(command);
-        currentContent = this.processSingleCommand(instruction, currentContent, mode, result, truncatedCommand);
+        currentContent = this.processSingleCommand(instruction, currentContent, mode, result, truncatedCommand, blockId);
       } catch (error) {
         if (error instanceof ParseError) {
-          this.handleParseError(error, mode, result, truncatedCommand);
+          this.handleParseError(error, mode, result, truncatedCommand, blockId);
         } else if (error instanceof BlockNotFoundError) {
-          this.handleBlockNotFound(error, command, mode, result, truncatedCommand);
+          this.handleBlockNotFound(error, command, mode, result, truncatedCommand, blockId);
         } else {
-          this.handleGeneralError(error as Error, command, mode, result, truncatedCommand);
+          this.handleGeneralError(error as Error, command, mode, result, truncatedCommand, blockId);
         }
       }
     }
@@ -108,7 +110,8 @@ export class BlockEditor {
     readFile: (uri: vscode.Uri) => Promise<FileReadResult>,
     writeFile: (uri: vscode.Uri, content: string, info: FileInfo) => Promise<void>,
     mode: ExecutionMode = 'apply',
-    token?: vscode.CancellationToken,
+    token: vscode.CancellationToken | undefined,
+    blockIds: string[],  // Block IDs for error attribution
   ): Promise<OperationsResult> {
     const startTime = Date.now();
 
@@ -170,10 +173,11 @@ export class BlockEditor {
     // Handle parsing errors
     for (const parsed of parsedCommands) {
       if (!parsed.ok) {
+        const blockId = blockIds[parsed.index] ?? '0000';
         if (parsed.error instanceof ParseError) {
-          this.handleParseError(parsed.error, mode, result, parsed.truncated);
+          this.handleParseError(parsed.error, mode, result, parsed.truncated, blockId);
         } else {
-          this.handleGeneralError(parsed.error, parsed.cmd, mode, result, parsed.truncated);
+          this.handleGeneralError(parsed.error, parsed.cmd, mode, result, parsed.truncated, blockId);
         }
       }
     }
@@ -233,6 +237,7 @@ export class BlockEditor {
 
         // Add metadata for debugging
         operation.meta = { commandIndex: parsed.index };
+        operation.blockId = blockIds[parsed.index] ?? '0000';
         result.operations.push(operation);
 
         // Update counters
@@ -335,8 +340,7 @@ export class BlockEditor {
     }
   }
 
-  // Legacy string-based method for backward compatibility
-  // Will be removed in phase C after migration is complete
+  // Legacy method for backward compatibility
 
   private processSingleCommand(
     instruction: DSLInstruction,
@@ -344,6 +348,7 @@ export class BlockEditor {
     mode: ExecutionMode,
     result: OperationsResult,
     truncatedCommand: string,
+    blockId?: string,
   ): string {
     // Count blocks for this command
     const blocks = this.processor.findAllBlocks(currentContent, instruction.targetBlock);
@@ -354,6 +359,7 @@ export class BlockEditor {
       const operationResult = this.previewOperation(instruction, currentContent, undefined, truncatedCommand);
       operationResult.blocksFound = blocks.length;
       operationResult.blocksProcessed = blocks.length;
+      operationResult.blockId = blockId ?? '0000';
       result.operations.push(operationResult);
 
       if (operationResult.status === 'WOULD_SUCCESS') {
@@ -382,6 +388,7 @@ export class BlockEditor {
       sourceCommand: truncatedCommand,
       blocksFound: blocks.length,
       blocksProcessed: blocks.length,
+      blockId: blockId ?? '0000',
     };
 
     result.operations.push(operationResult);
@@ -650,6 +657,7 @@ export class BlockEditor {
     mode: ExecutionMode,
     result: OperationsResult,
     truncatedCommand: string,
+    blockId?: string,
   ): void {
     const operationResult: OperationResult = {
       operationType: 'UNKNOWN',
@@ -657,6 +665,7 @@ export class BlockEditor {
       isPreview: mode === 'preview',
       errorMessage: error.message,
       sourceCommand: truncatedCommand,
+      blockId: blockId ?? '0000',
     };
     result.operations.push(operationResult);
     result.errors++;
@@ -668,6 +677,7 @@ export class BlockEditor {
     mode: ExecutionMode,
     result: OperationsResult,
     truncatedCommand: string,
+    blockId?: string,
   ): void {
     const opType = this.guessOperationType(command);
     const operationResult: OperationResult = {
@@ -677,6 +687,7 @@ export class BlockEditor {
       errorMessage: error.message,
       sourceCommand: truncatedCommand,
       reasonCode: 'NOT_FOUND',
+      blockId: blockId ?? '0000',
     };
     result.operations.push(operationResult);
     result.skipped++;
@@ -688,6 +699,7 @@ export class BlockEditor {
     mode: ExecutionMode,
     result: OperationsResult,
     truncatedCommand: string,
+    blockId?: string,
   ): void {
     const opType = this.guessOperationType(command);
     const operationResult: OperationResult = {
@@ -696,6 +708,7 @@ export class BlockEditor {
       isPreview: mode === 'preview',
       errorMessage: error.message,
       sourceCommand: truncatedCommand,
+      blockId: blockId ?? '0000',
     };
     result.operations.push(operationResult);
     result.errors++;
