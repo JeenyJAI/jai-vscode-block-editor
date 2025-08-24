@@ -14,13 +14,13 @@ Bridge between AI code generation and your IDE. Execute AI-suggested changes wit
 
 ## Features
 
-- **Smart Replace** - Replace code blocks across multiple files simultaneously
-- **Bulk Delete** - Remove unwanted code patterns everywhere at once
-- **Precision Insert** - Add code at exact positions (before/after blocks, start/end of files)
-- **Boundary Blocks** - Define complex replacements with start/end boundaries using `---TO---`
-- **Multi-file Operations** - Use glob patterns to target specific file groups
-- **Pre-execution Analysis** - independent analysis of each command (not a preview of cascading changes)
-- **Format Preservation** - Maintains original file encoding and line endings
+- **Smart Replace** – Replace code blocks across multiple files simultaneously
+- **Bulk Delete** – Remove unwanted code patterns everywhere at once
+- **Precision Insert** – Add code at exact positions (before/after blocks, start/end of files)
+- **Boundary Blocks** – Define complex replacements with start/end boundaries using `---TO---`
+- **Multi-file Operations** – Use glob patterns to target specific file groups
+- **Pre-execution Analysis** – independent analysis of each command (not a preview of cascading changes)
+- **Format Preservation** – Maintains original file encoding and line endings
 
 ## Quick Start
 
@@ -29,7 +29,20 @@ Bridge between AI code generation and your IDE. Execute AI-suggested changes wit
 3. Enter your DSL commands
 4. Press `Ctrl+Enter` to apply changes
 
-## DSL Commands
+## Supported Operations
+
+- `replace block` – replace all block occurrences
+- `delete block` – delete all block occurrences
+- `insert before` – insert before each block occurrence
+- `insert after` – insert after each block occurrence
+- `insert at start` – insert at file start
+- `insert at end` – insert at file end
+
+> **DSL notes**
+> - Full-line `//` comments **outside** `---BEGIN---/---END---` blocks are ignored
+> - Comments **inside** blocks are preserved as literal content
+
+## Examples
 
 ### Replace Block
 ```dsl
@@ -55,7 +68,7 @@ def legacy_function():
 in files ["src/**/*.py"]
 ```
 
-### Insert Code
+### Insert Block
 ```dsl
 insert after
 ---BEGIN---
@@ -94,26 +107,7 @@ def process_data(data):
 ---END---
 ```
 
-## File Patterns
-
-```dsl
-in files ["config.py"]                        # single file
-in files ["config.py", "settings.py"]         # multiple files
-in files ["src/"]                             # all files in directory (recursive)
-in files ["*.py"]                             # pattern in current directory
-in files ["src/*.py"]                         # pattern in specific directory
-in files ["**/test_*.py"]                     # recursive pattern
-in files ["config.py", "src/", "tests/*.py"]  # combination
-```
-
-**Pattern Rules:**
-- Paths ending with `/` - directories (recursive search)
-- `*` - any characters within single level
-- `**` - recursive search in all subdirectories
-- All patterns are processed as glob patterns
-- If no files specified - uses current active file
-
-## Multiple Commands
+### Multiple Operations
 
 Use `---NEXT_BLOCK---` to execute multiple operations at once:
 
@@ -162,65 +156,24 @@ Continue with applying changes?
 
 **Important**: Preview analyzes each command independently. When applied sequentially, commands may affect each other, so final result may differ from pre-analysis.
 
-## Supported Operations
+## File Patterns
 
-- `replace block` - replace all block occurrences
-- `delete block` - delete all block occurrences
-- `insert before` - insert before each block occurrence
-- `insert after` - insert after each block occurrence
-- `insert at start` - insert at file start
-- `insert at end` - insert at file end
-
-## Advanced Examples
-
-### Complex Function Replacement
 ```dsl
-replace block
----BEGIN---
-def validate_email(email):
-    if not email:
-        return False
-    return '@' in email
----END---
-with
----BEGIN---
-def validate_email(email):
-    if not email or '@' not in email:
-        return False
-    if email.count('@') != 1:
-        return False
-    local, domain = email.split('@')
-    return len(local) > 0 and len(domain) > 3 and '.' in domain
----END---
-in files ["validators.py", "utils/validation.py"]
+in files ["config.py"]                        # single file
+in files ["config.py", "settings.py"]         # multiple files
+in files ["src/"]                             # all files in directory (recursive)
+in files ["*.py"]                             # pattern in current directory
+in files ["src/*.py"]                         # pattern in specific directory
+in files ["**/test_*.py"]                     # recursive pattern
+in files ["config.py", "src/", "tests/*.py"]  # combination
 ```
 
-### Mass Debug Cleanup
-```dsl
-delete block
----BEGIN---
-console.log('DEBUG:
----TO---
-');
----END---
-in files ["src/**/*.js"]
-```
-
-### Add License Headers
-```dsl
-insert at start
-with
----BEGIN---
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Copyright (c) 2024 Your Company
-Licensed under MIT License
-"""
-
----END---
-in files ["src/**/*.py"]
-```
+**Pattern Rules:**
+- Paths ending with `/` – directories (recursive search)
+- `*` – any characters within single level
+- `**` – recursive search in all subdirectories
+- All patterns are processed as glob patterns
+- If no files specified – uses current active file
 
 ## Configuration
 
@@ -230,7 +183,7 @@ This extension contributes the following settings:
 * `blockEditor.mixedEolPolicy`: How to handle mixed line endings (`warn`, `ignore`, `skip`, `normalize`)
 * `blockEditor.enableVerboseLogging`: Enable verbose logging for debugging (default: `false`)
 * `blockEditor.files.respectSearchExclude`: Respect VS Code's exclude settings when resolving files (default: `true`)
-* `blockEditor.files.includeDotfiles`: Control dotfile handling - `inherit`/`always`/`never` (default: `inherit`)
+* `blockEditor.files.includeDotfiles`: Control dotfile handling – `inherit`/`always`/`never` (default: `inherit`)
 
 ## Requirements
 
@@ -256,10 +209,14 @@ Block Editor operates only within your workspace boundaries:
 
 Found a bug or have a feature request? Please open an issue on [GitHub](https://github.com/JeenyJAI/jai-vscode-block-editor/issues).
 
+## Acknowledgments
+
+- Special thanks to [Al-Shamal](https://github.com/Al-Shamal) for testing, editing, and bringing this extension closer to humans
+
 ## License
 
 This extension is licensed under the [MIT License](LICENSE).
 
 ---
 
-🚀 **Created by [Claude Opus 4.1](https://claude.ai) · Reviewed by [Gemini 2.5 Pro](https://gemini.google.com), [ChatGPT 5](https://chat.openai.com), [DeepSeek V3](https://www.deepseek.com)**
+🚀 **Created by [Claude Opus 4.1](https://claude.ai), [ChatGPT 5 Pro](https://chat.openai.com) · Reviewed by [Gemini 2.5 Pro](https://gemini.google.com), [DeepSeek V3](https://www.deepseek.com)**

@@ -15,6 +15,23 @@ All notable changes to the **JAI Block Editor** extension are documented in this
 
 ---
 
+## [0.4.0] - 2025-08-24
+
+### Added
+- Support for full-line `//` comments outside `---BEGIN---/---END---` blocks
+- Comments can be used to document DSL commands without causing parse errors
+
+### Changed
+- Exact END-marker matching for block termination
+- Literal `---BEGIN---`, `---END---` or `---NEXT_BLOCK---` strings inside block content are treated as plain text; `---NEXT_BLOCK---` inside blocks no longer splits commands
+
+### Fixed
+- "Unknown operation" when encountering comments outside blocks ([#2](https://github.com/JeenyJAI/jai-vscode-block-editor/issues/2))
+- Premature block closure when `---END---` appeared as text inside tagged blocks (`---BEGIN:tag---`)
+- Incorrect command splitting when `---NEXT_BLOCK---` appeared inside block content
+
+---
+
 ## [0.3.2] - 2025-08-23
 
 ### Fixed

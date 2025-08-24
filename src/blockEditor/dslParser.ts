@@ -2,17 +2,75 @@
 
 import { DSLInstruction, OperationType, InsertPosition, Block, BlockType, ScopeSpec, ParseError } from './types.js';
 
-const DSL_BEGIN_RE = /^---BEGIN(:[\w_]+)?---$/;
 const DSL_TO_MARKER = '---TO---';
 
 export class DSLParser {
-  parse(dslContent: string): DSLInstruction {
-    const lines = dslContent.trim().split('\n');
-    if (lines.length === 0) {
-      throw new ParseError('DSL content is empty', 0, 0);
+  // Unified pattern for block markers
+  private static readonly BEGIN_RE = /^---BEGIN(:[\w-]+)?---$/;  // Capturing group for ID
+
+  /**
+   * Remove full-line '//' comments outside of ---BEGIN---/---END--- blocks
+   * Comments inside blocks are preserved as literal content
+   * Uses exact END marker matching to handle nested markers in content
+   */
+  private removeStandaloneComments(content: string): string {
+    // Remove BOM if present and split by any line ending
+    const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/);
+    const processedLines: string[] = [];
+    let insideBlock = false;
+    let currentEndMarker: string | null = null;
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+
+      if (!insideBlock) {
+        // Check for block start and compute exact END marker
+        const beginMatch = DSLParser.BEGIN_RE.exec(trimmedLine);
+        if (beginMatch) {
+          insideBlock = true;
+          // Construct exact END marker from captured ID
+          currentEndMarker = `---END${beginMatch[1] ?? ''}---`;
+          processedLines.push(line);
+          continue;
+        }
+
+        // Outside blocks: skip empty lines and full-line comments
+        if (trimmedLine === '' || trimmedLine.startsWith('//')) {
+          continue;
+        }
+
+        processedLines.push(line);
+      } else {
+        // Inside block: only exit on exact END marker match
+        if (trimmedLine === currentEndMarker) {
+          insideBlock = false;
+          currentEndMarker = null;
+        }
+        // Keep everything inside blocks (including comments and pseudo-markers)
+        processedLines.push(line);
+      }
     }
 
+    return processedLines.join('\n');
+  }
+
+
+  parse(dslContent: string): DSLInstruction {
+    // Preprocess to remove standalone comments (outside of blocks)
+    const processedContent = this.removeStandaloneComments(dslContent);
+    
+    // Split without trimming the whole content (preserves line numbers)
+    const lines = processedContent.split(/\r?\n/);
+    
+    // Find first non-empty line
     let currentIdx = 0;
+    while (currentIdx < lines.length && !lines[currentIdx]?.trim()) {
+      currentIdx++;
+    }
+    
+    if (currentIdx >= lines.length) {
+      throw new ParseError('DSL content is empty', 0, 0);
+    }
 
     // Parse operation
     const { operation, insertPosition, nextIdx } = this.parseOperation(lines, currentIdx);
@@ -190,11 +248,7 @@ export class DSLParser {
     }
 
     if (isBoundaryBlock && parts.length === 2) {
-      console.log('Parsed BOUNDARY block:', {
-        startPattern: parts[0],
-        endPattern: parts[1],
-      });
-
+      // Boundary block detected with start and end patterns
       return {
         block: {
           content: '',
@@ -227,7 +281,7 @@ export class DSLParser {
     if (!beginLine) {
       throw new ParseError('Invalid line at begin marker position', startIdx, 0);
     }
-    const beginMatch = DSL_BEGIN_RE.exec(beginLine);
+    const beginMatch = DSLParser.BEGIN_RE.exec(beginLine);
 
     if (!beginMatch) {
       throw new ParseError(`Invalid ---BEGIN--- marker: '${beginLine}'`, startIdx, 0);

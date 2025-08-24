@@ -105,7 +105,7 @@ export class TextInserterPanel {
             type: 'setDebugMode',
             value: debugMode
           });
-          console.log('Debug mode updated to:', debugMode);
+          // Debug mode configuration updated
         }
       })
     );
@@ -118,46 +118,64 @@ export class TextInserterPanel {
   private _parseCommandBlocks(content: string): Array<{ id: string; content: string }> {
     const blocks: Array<{ id: string; content: string }> = [];
     
-    // Split by lines to ensure separators are on their own line
-    const lines = content.split('\n');
+    // Remove BOM and split by any line ending
+    const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/);
+    
+    // Use same regex pattern as parser for consistency
+    // IMPORTANT: Must match DSLParser.BEGIN_RE exactly
+    const BEGIN_RE = /^---BEGIN(:[\w-]+)?---$/;  // Capturing group for ID
     
     let currentId = '0000';
     let currentContent: string[] = [];
+    let insideBlock = false;
+    let currentEndMarker: string | null = null;
     
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === undefined) {
-        continue;
-      }
-      
+      const line = lines[i] ?? '';
       const trimmedLine = line.trim();
       
-      // Check if this line is a separator (must be alone on the line)
-      if (trimmedLine.startsWith('---NEXT_BLOCK') && trimmedLine.endsWith('---')) {
-        // Save previous block if it has content
-        if (currentContent.length > 0) {
+      if (!insideBlock) {
+        // Check for block start and compute exact END marker
+        const beginMatch = BEGIN_RE.exec(trimmedLine);
+        if (beginMatch) {
+          insideBlock = true;
+          // Construct exact END marker from captured ID
+          currentEndMarker = `---END${beginMatch[1] ?? ''}---`;
+          currentContent.push(line);
+          continue;
+        }
+        
+        // Check for separator (only outside blocks)
+        if (trimmedLine.startsWith('---NEXT_BLOCK') && trimmedLine.endsWith('---')) {
+          // Save previous block if it has content
           const blockContent = currentContent.join('\n').trim();
           if (blockContent) {
             blocks.push({ id: currentId, content: blockContent });
           }
+          
+          // Extract ID from separator or generate sequential ID
+          const idMatch = trimmedLine.match(/---NEXT_BLOCK:(\w+)---/);
+          currentId = idMatch?.[1] ?? blocks.length.toString().padStart(4, '0');
+          currentContent = [];
+          continue;
         }
         
-        // Extract ID from separator or generate sequential ID
-        const idMatch = trimmedLine.match(/---NEXT_BLOCK:(\w+)---/);
-        currentId = idMatch?.[1] ?? blocks.length.toString().padStart(4, '0');
-        currentContent = [];
+        currentContent.push(line);
       } else {
-        // This is content, add to current block
+        // Inside block: only exit on exact END marker match
+        if (trimmedLine === currentEndMarker) {
+          insideBlock = false;
+          currentEndMarker = null;
+        }
+        // Keep everything inside blocks (including pseudo NEXT_BLOCK markers)
         currentContent.push(line);
       }
     }
     
-    // Add last block if exists
-    if (currentContent.length > 0) {
-      const blockContent = currentContent.join('\n').trim();
-      if (blockContent) {
-        blocks.push({ id: currentId, content: blockContent });
-      }
+    // CRITICAL: Flush the last block (if no trailing ---NEXT_BLOCK:0001---)
+    const tailContent = currentContent.join('\n').trim();
+    if (tailContent) {
+      blocks.push({ id: currentId, content: tailContent });
     }
     
     return blocks;
